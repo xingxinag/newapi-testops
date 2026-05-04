@@ -27,6 +27,7 @@ document.querySelector('#app').innerHTML = `
             <legend>通用测试参数</legend>
             <label>Base URL<input name="baseUrl" value="https://api.example.com" /></label>
             <label>模型<input name="model" value="demo-model" /></label>
+            <label>端点预设<select name="endpointPreset"><option value="openai-chat">OpenAI ChatCompletions</option><option value="models-list">模型列表</option><option value="openai-responses">OpenAI Responses</option><option value="claude-messages">Claude Messages</option><option value="gemini-generate-content">Gemini generateContent</option><option value="openai-image-generation">OpenAI 图像生成</option></select></label>
             <label>测试模式<select name="mode"><option value="text">文本</option><option value="image">图像</option><option value="aspect-ratio">宽高比</option></select></label>
             <label>执行方式<select name="executionMode"><option value="synthetic">模拟探测</option><option value="live">真实请求</option></select></label>
             <label>并发数<input name="concurrency" type="number" value="2" min="1" /></label>
@@ -333,7 +334,7 @@ function renderJob(job) {
   const exports = ['csv', 'html', 'zip'].map((format) => `<a href="${exportUrl(job.runId, format)}" target="_blank" rel="noopener">${format.toUpperCase()} 报告</a>`).join('');
   return `<article class="job">
     <header><strong>${escapeHtml(job.runId)}</strong><span>${escapeHtml(job.status)}</span><b>${escapeHtml(job.score)}%</b></header>
-    <p>${escapeHtml(formatExecutionMode(job.input.executionMode || 'synthetic'))} / ${escapeHtml(formatTestMode(job.input.mode))} / ${escapeHtml(job.input.model)} / ${escapeHtml(job.summary?.totalRequests || 0)} 次请求</p>
+    <p>${escapeHtml(formatRunSummary(job.input, `${job.summary?.totalRequests || 0} 次请求`))}</p>
     <section class="link-group">
       <h3>测试证据</h3>
       <nav class="artifacts" aria-label="${escapeHtml(job.runId)} 的测试证据">${artifacts}</nav>
@@ -360,6 +361,7 @@ function renderBenchmarkReport(job) {
   const groups = [
     renderReportGroup('测试配置', [
       reportMetric('API地址', input.baseUrl),
+      reportMetric('端点预设', input.endpointPreset ? formatEndpointPreset(input.endpointPreset) : undefined),
       reportMetric('测试模式', input.mode ? formatTestMode(input.mode) : undefined),
       reportMetric('目标模型', input.model),
       reportMetric('并发数', input.concurrency),
@@ -528,7 +530,7 @@ function formatMetric(value, suffix) {
 function renderSchedule(schedule) {
   return `<article class="job">
     <header><strong>${escapeHtml(schedule.name)}</strong><span>每 ${escapeHtml(schedule.intervalSeconds)} 秒</span><b>${escapeHtml(schedule.history?.length || 0)} 次运行</b></header>
-    <p>${escapeHtml(formatExecutionMode(schedule.input.executionMode || 'synthetic'))} / ${escapeHtml(formatTestMode(schedule.input.mode))} / ${escapeHtml(schedule.input.model)}</p>
+    <p>${escapeHtml(formatRunSummary(schedule.input))}</p>
     <p class="muted">后台 worker 会按此间隔自动执行；请确保 <code>npm run start:worker</code> 正在运行。</p>
     <p class="muted">最近运行：${escapeHtml(schedule.lastRunId || '暂无')}</p>
   </article>`;
@@ -540,6 +542,27 @@ function formatExecutionMode(mode) {
 
 function formatTestMode(mode) {
   return ({ text: '文本', image: '图像', 'aspect-ratio': '宽高比' })[mode] || mode;
+}
+
+function formatEndpointPreset(preset) {
+  return ({
+    'openai-chat': 'OpenAI ChatCompletions',
+    'models-list': '模型列表',
+    'openai-responses': 'OpenAI Responses',
+    'claude-messages': 'Claude Messages',
+    'gemini-generate-content': 'Gemini generateContent',
+    'openai-image-generation': 'OpenAI 图像生成',
+  })[preset] || preset;
+}
+
+function formatRunSummary(input = {}, suffix) {
+  return [
+    formatExecutionMode(input.executionMode || 'synthetic'),
+    formatTestMode(input.mode),
+    input.model,
+    input.endpointPreset ? formatEndpointPreset(input.endpointPreset) : undefined,
+    suffix,
+  ].filter(Boolean).join(' / ');
 }
 
 function artifactUrl(runId, name) {
