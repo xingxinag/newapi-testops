@@ -1,6 +1,6 @@
-const apiBase = window.__NEWAPI_TESTOPS_API__ || 'http://127.0.0.1:8788';
+const defaultApiBase = window.__NEWAPI_TESTOPS_API__ || 'http://127.0.0.1:8788';
 
-const state = { jobs: [], schedules: [], trends: [], user: null, authRequired: false, teams: [], selectedTeamId: '', apiStatus: { state: 'connecting', error: '', service: '' } };
+const state = { jobs: [], schedules: [], trends: [], user: null, authRequired: false, teams: [], selectedTeamId: '', apiBase: normalizeApiBase(defaultApiBase), apiStatus: { state: 'connecting', error: '', service: '' } };
 
 document.querySelector('#app').innerHTML = `
   <main class="shell">
@@ -16,6 +16,10 @@ document.querySelector('#app').innerHTML = `
       <aside class="sidebar-stack">
         <section class="card api-status-card" aria-live="polite">
           <h2>后端连接</h2>
+          <form id="api-connection-form" class="api-connection-form">
+            <label>API 地址<input id="api-base-input" name="apiBase" value="${escapeHtml(state.apiBase)}" autocomplete="url" /></label>
+            <button type="submit" id="api-test-button" class="secondary compact-button">测试连接</button>
+          </form>
           <div id="api-status"></div>
         </section>
         <section class="card account-card">
@@ -87,7 +91,7 @@ document.querySelector('#job-form').addEventListener('submit', async (event) => 
   event.preventDefault();
   const payload = getJobPayload(event.currentTarget);
   document.querySelector('#form-status').textContent = '正在运行测试...';
-  const response = await fetch(`${apiBase}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
+  const response = await fetch(`${getApiBase()}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
   const json = await response.json();
   document.querySelector('#form-status').textContent = json.success ? `已创建测试任务 ${json.data.runId}` : json.message;
   await Promise.all([loadJobs(), loadTrends()]);
@@ -103,13 +107,18 @@ document.querySelector('#schedule-button').addEventListener('click', async () =>
   };
   if (state.selectedTeamId) payload.teamId = state.selectedTeamId;
   document.querySelector('#form-status').textContent = '正在创建定时计划...';
-  const response = await fetch(`${apiBase}/api/schedules`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
+  const response = await fetch(`${getApiBase()}/api/schedules`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
   const json = await response.json();
   document.querySelector('#form-status').textContent = json.success ? `已创建定时计划 ${json.data.name}` : json.message;
   await Promise.all([loadJobs(), loadSchedules(), loadTrends()]);
 });
 
 document.querySelector('#fetch-models-button').addEventListener('click', fetchModelList);
+
+document.querySelector('#api-connection-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await testApiConnection();
+});
 
 document.querySelector('#model-select').addEventListener('change', (event) => {
   const model = event.currentTarget.value;
@@ -118,7 +127,19 @@ document.querySelector('#model-select').addEventListener('change', (event) => {
 
 renderApiStatus();
 
-async function checkApiHealth() {
+async function testApiConnection() {
+  const input = document.querySelector('#api-base-input');
+  state.apiBase = normalizeApiBase(input.value || defaultApiBase);
+  input.value = state.apiBase;
+  await checkApiHealth(getApiBase());
+  await loadCurrentUser().then(refreshProtectedData).catch((error) => {
+    document.querySelector('#jobs').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+    document.querySelector('#schedules').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+    document.querySelector('#trends').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+  });
+}
+
+async function checkApiHealth(apiBase = getApiBase()) {
   state.apiStatus = { state: 'connecting', error: '', service: '' };
   renderApiStatus();
   try {
@@ -138,11 +159,19 @@ function renderApiStatus() {
   const status = state.apiStatus;
   document.querySelector('#api-status').innerHTML = `<div class="api-status ${stateClass[status.state] || 'connecting'}">
     <span>${escapeHtml(labels[status.state] || status.state)}</span>
-    <strong>${escapeHtml(apiBase)}</strong>
+    <strong>${escapeHtml(getApiBase())}</strong>
     <p class="muted">后端只提供 API 服务；当前页面是独立 Web 控制台，用于确认前端是否已连到该 API。</p>
     ${status.service ? `<p class="muted">服务：${escapeHtml(status.service)}</p>` : ''}
     ${status.error ? `<p class="error">错误：${escapeHtml(status.error)}</p>` : ''}
   </div>`;
+}
+
+function getApiBase() {
+  return state.apiBase;
+}
+
+function normalizeApiBase(value) {
+  return String(value || '').trim().replace(/\/$/, '') || 'http://127.0.0.1:8788';
 }
 
 function getJobPayload(formElement) {
@@ -168,7 +197,7 @@ async function fetchModelList() {
   modelSelect.innerHTML = '';
   modelOptions.innerHTML = '';
   try {
-    const response = await fetch(`${apiBase}/api/models`, {
+    const response = await fetch(`${getApiBase()}/api/models`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       ...protectedFetchOptions(),
@@ -216,7 +245,7 @@ document.querySelector('#team-panel').addEventListener('submit', async (event) =
 
 async function loadCurrentUser() {
   try {
-    const response = await fetch(`${apiBase}/api/auth/me`, { credentials: 'include' });
+    const response = await fetch(`${getApiBase()}/api/auth/me`, protectedFetchOptions());
     if (response.status === 401) {
       state.user = null;
       state.authRequired = true;
@@ -238,7 +267,7 @@ async function submitAuth(action, formElement) {
   const form = new FormData(formElement);
   const payload = { email: form.get('email'), password: form.get('password') };
   setAuthStatus(action === 'register' ? '正在注册...' : '正在登录...');
-  const response = await fetch(`${apiBase}/api/auth/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
+  const response = await fetch(`${getApiBase()}/api/auth/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
   const json = await response.json();
   if (!json.success) return setAuthStatus(json.message || '操作失败');
   state.user = json.data || null;
@@ -250,7 +279,7 @@ async function submitAuth(action, formElement) {
 
 async function logout() {
   setAuthStatus('正在退出...');
-  const response = await fetch(`${apiBase}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+  const response = await fetch(`${getApiBase()}/api/auth/logout`, { method: 'POST', credentials: 'include' });
   const json = await response.json();
   if (!json.success) return setAuthStatus(json.message || '退出失败');
   state.user = null;
@@ -266,7 +295,7 @@ async function loadTeams() {
     state.selectedTeamId = '';
     return;
   }
-  const response = await fetch(`${apiBase}/api/teams`, { credentials: 'include' });
+  const response = await fetch(`${getApiBase()}/api/teams`, { credentials: 'include' });
   if (response.status === 401) {
     state.teams = [];
     state.selectedTeamId = '';
@@ -280,7 +309,7 @@ async function loadTeams() {
 async function createTeam(formElement) {
   const form = new FormData(formElement);
   setTeamStatus('正在创建团队...');
-  const response = await fetch(`${apiBase}/api/teams`, { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: form.get('teamName') }) });
+  const response = await fetch(`${getApiBase()}/api/teams`, { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: form.get('teamName') }) });
   const json = await response.json();
   if (!json.success) return setTeamStatus(json.message || '创建团队失败');
   state.teams = [json.data, ...state.teams.filter((team) => team.id !== json.data.id)];
@@ -292,7 +321,7 @@ async function addTeamMember(formElement) {
   if (!state.selectedTeamId) return setTeamStatus('请先选择一个团队。');
   const form = new FormData(formElement);
   setTeamStatus('正在添加成员...');
-  const response = await fetch(`${apiBase}/api/teams/${encodeURIComponent(state.selectedTeamId)}/members`, { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include', body: JSON.stringify({ email: form.get('memberEmail') }) });
+  const response = await fetch(`${getApiBase()}/api/teams/${encodeURIComponent(state.selectedTeamId)}/members`, { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include', body: JSON.stringify({ email: form.get('memberEmail') }) });
   const json = await response.json();
   setTeamStatus(json.success ? `已添加成员 ${json.data.email}` : json.message || '添加成员失败');
   if (json.success) await loadTeams();
@@ -353,7 +382,7 @@ function setTeamStatus(message) {
 }
 
 async function loadJobs() {
-  const response = await fetch(`${apiBase}/api/jobs`, protectedFetchOptions());
+  const response = await fetch(`${getApiBase()}/api/jobs`, protectedFetchOptions());
   if (response.status === 401) {
     state.jobs = [];
     document.querySelector('#health-score').textContent = '--';
@@ -365,7 +394,7 @@ async function loadJobs() {
 }
 
 async function loadSchedules() {
-  const response = await fetch(`${apiBase}/api/schedules`, protectedFetchOptions());
+  const response = await fetch(`${getApiBase()}/api/schedules`, protectedFetchOptions());
   if (response.status === 401) {
     state.schedules = [];
     return renderProtectedNotice('#schedules', '登录后可查看受保护的定时计划。');
@@ -376,7 +405,7 @@ async function loadSchedules() {
 }
 
 async function loadTrends() {
-  const response = await fetch(`${apiBase}/api/analytics/trends`, protectedFetchOptions());
+  const response = await fetch(`${getApiBase()}/api/analytics/trends`, protectedFetchOptions());
   if (response.status === 401) {
     state.trends = [];
     return renderProtectedNotice('#trends', '登录后可查看受保护的趋势数据。');
@@ -403,7 +432,7 @@ function shouldSendCredentials() {
 }
 
 function isSameOriginApi() {
-  return new URL(apiBase, window.location.href).origin === window.location.origin;
+  return new URL(getApiBase(), window.location.href).origin === window.location.origin;
 }
 
 function renderJobs() {
@@ -743,18 +772,18 @@ function formatRunSummary(input = {}, suffix) {
 }
 
 function artifactUrl(runId, name) {
-  return `${apiBase}/api/jobs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`;
+  return `${getApiBase()}/api/jobs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`;
 }
 
 function exportUrl(runId, format) {
-  return `${apiBase}/api/jobs/${encodeURIComponent(runId)}/export.${encodeURIComponent(format)}`;
+  return `${getApiBase()}/api/jobs/${encodeURIComponent(runId)}/export.${encodeURIComponent(format)}`;
 }
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 }
 
-checkApiHealth();
+checkApiHealth(getApiBase());
 
 loadCurrentUser().then(refreshProtectedData).catch((error) => {
   document.querySelector('#jobs').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
