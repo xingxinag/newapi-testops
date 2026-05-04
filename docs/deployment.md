@@ -32,7 +32,15 @@ Build the static frontend first, then start the API and web containers:
 
 ```bash
 npm run build
-docker compose up --build
+npm run compose:up
 ```
 
-The compose stack exposes the API on `http://127.0.0.1:8788` and the static frontend on `http://127.0.0.1:4178`. API metadata and local artifacts are persisted in the `newapi-testops-data` Docker volume at `/data`.
+`npm run compose:up` wraps `docker compose up --build -d` and then prints the application URLs:
+
+```text
+Web:    http://127.0.0.1:4178
+API:    http://127.0.0.1:8788
+Health: http://127.0.0.1:8788/api/health
+```
+
+Plain `docker compose up --build -d` only reports container lifecycle state; it does not know which URLs are meaningful for the application. The compose stack exposes the API on `http://127.0.0.1:8788` and the static frontend on `http://127.0.0.1:4178`. API metadata and local artifacts are persisted in the `newapi-testops-data` Docker volume at `/data`.

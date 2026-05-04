@@ -553,14 +553,21 @@ NEWAPI_TESTOPS_API=https://api.your-domain.com npm run build
 ### 3. 启动 Docker Compose
 
 ```bash
-docker compose up --build -d
+npm run compose:up
 ```
 
-默认端口映射：
+这个命令内部会执行 `docker compose up --build -d`，然后额外打印可访问地址。普通 `docker compose up --build -d` 只会显示容器启动状态，不会自动告诉你应用 URL。
+
+启动成功后会看到类似：
 
 ```text
-API: http://127.0.0.1:8788
-Web: http://127.0.0.1:4178
+NewAPI TestOps is starting:
+
+Web:    http://127.0.0.1:4178
+API:    http://127.0.0.1:8788
+Health: http://127.0.0.1:8788/api/health
+
+If this runs on a VPS, replace 127.0.0.1 with your server IP or domain.
 ```
 
 compose 里还有一个 worker 服务，用来按轮询间隔处理调度任务。API 和 worker 共用同一个 Docker volume。
