@@ -61,6 +61,9 @@ async function runLiveJob(input, store, now = new Date()) {
   const bodyText = typeof parsedBody === 'string' ? parsedBody : JSON.stringify(parsedBody);
   const latencyMs = firstResult.latencyMs;
   const latencies = results.map((result) => result.latencyMs).sort((a, b) => a - b);
+  const responseSizes = results.map((result) => result.responseBytes).sort((a, b) => a - b);
+  const ttfbValues = results.map((result) => result.ttfbMs).filter(Number.isFinite).sort((a, b) => a - b);
+  const queueValues = results.map((result) => result.queueLatencyMs).filter(Number.isFinite).sort((a, b) => a - b);
   const successCount = results.filter((result) => result.statusCode >= 200 && result.statusCode < 300).length;
   const failureCount = totalRequests - successCount;
   const checks = buildChecklist({ statusCode, bodyText, latencyMs, model: input.model });
@@ -77,13 +80,19 @@ async function runLiveJob(input, store, now = new Date()) {
     failureCount,
     rateLimitedCount: results.filter((result) => result.statusCode === 429).length,
     timeoutCount: results.filter((result) => String(result.bodyText).includes('Timeout')).length,
-    latencyMs: { min: latencies[0], p50: percentile(latencies, 50), p95: percentile(latencies, 95), max: latencies[latencies.length - 1] },
-    ttfbMs: null,
-    queueLatencyMs: 0,
+    latencyMs: summarizeValues(latencies),
+    responseBytes: summarizeValues(responseSizes),
+    errors: summarizeErrors(results),
+    throughput: summarizeThroughput(totalRequests, successCount, startedAt, new Date()),
+    concurrency: summarizeConcurrency(results),
+    ttfb: summarizeValues(ttfbValues),
+    queueLatency: summarizeValues(queueValues),
+    ttfbMs: avg(ttfbValues),
+    queueLatencyMs: avg(queueValues),
     tokens: tokenTotals,
   };
   const requestRecord = { url, headers: requestHeaders, body: requestBody };
-  const responseRecord = { statusCode, headers: firstResult.headers, body: parsedBody, samples: results.map((result, index) => ({ index: index + 1, statusCode: result.statusCode, latencyMs: result.latencyMs })) };
+  const responseRecord = { statusCode, headers: firstResult.headers, body: parsedBody, samples: results.map((result, index) => ({ index: index + 1, statusCode: result.statusCode, latencyMs: result.latencyMs, ttfbMs: result.ttfbMs, queueLatencyMs: result.queueLatencyMs, responseBytes: result.responseBytes, errorType: result.errorType, activeRequests: result.activeRequests })) };
   const artifacts = [
     await store.putArtifact(input.runId, 'request.json', requestRecord),
     await store.putArtifact(input.runId, 'response.json', responseRecord),
@@ -108,18 +117,28 @@ async function runLiveJob(input, store, now = new Date()) {
 async function runLiveRequests(totalRequests, concurrency, url, headers, body) {
   const results = [];
   let nextIndex = 0;
+  let activeRequests = 0;
   const workerCount = Math.min(concurrency, totalRequests);
   async function worker() {
     while (nextIndex < totalRequests) {
+      const queuedAt = performance.now();
       nextIndex += 1;
-      results.push(await runOneLiveRequest(url, headers, body));
+      activeRequests += 1;
+      const currentActiveRequests = activeRequests;
+      try {
+        results.push(await runOneLiveRequest(url, headers, body, { queuedAt, activeRequests: currentActiveRequests }));
+      } finally {
+        activeRequests -= 1;
+      }
     }
   }
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
   return results;
 }
 
-async function runOneLiveRequest(url, headers, body) {
+async function runOneLiveRequest(url, headers, body, sampleContext = {}) {
+  const startedAt = performance.now();
+  const queueLatencyMs = sampleContext.queuedAt ? Math.max(0, startedAt - sampleContext.queuedAt) : 0;
   const start = performance.now();
   try {
     const response = await fetch(url, {
@@ -128,6 +147,7 @@ async function runOneLiveRequest(url, headers, body) {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(30000),
     });
+    const ttfbMs = Math.round(performance.now() - start);
     const bodyText = await response.text();
     return {
       statusCode: response.status,
@@ -135,6 +155,11 @@ async function runOneLiveRequest(url, headers, body) {
       bodyText,
       body: parseBody(bodyText),
       latencyMs: Math.round(performance.now() - start),
+      ttfbMs,
+      queueLatencyMs: round(queueLatencyMs),
+      responseBytes: Buffer.byteLength(bodyText),
+      errorType: response.status >= 200 && response.status < 300 ? null : `status_${response.status}`,
+      activeRequests: sampleContext.activeRequests || 1,
     };
   } catch (error) {
     const bodyText = JSON.stringify({ error: error.message });
@@ -144,8 +169,45 @@ async function runOneLiveRequest(url, headers, body) {
       bodyText,
       body: parseBody(bodyText),
       latencyMs: Math.round(performance.now() - start),
+      ttfbMs: Math.round(performance.now() - start),
+      queueLatencyMs: round(queueLatencyMs),
+      responseBytes: Buffer.byteLength(bodyText),
+      errorType: error.name || 'request_error',
+      activeRequests: sampleContext.activeRequests || 1,
     };
   }
+}
+
+function summarizeValues(values) {
+  if (!values.length) return { min: 0, avg: 0, p50: 0, p90: 0, p95: 0, p99: 0, max: 0 };
+  return { min: values[0], avg: avg(values), p50: percentile(values, 50), p90: percentile(values, 90), p95: percentile(values, 95), p99: percentile(values, 99), max: values[values.length - 1] };
+}
+
+function summarizeErrors(results) {
+  return results.reduce((errors, result) => {
+    if (!result.errorType) return errors;
+    errors[result.errorType] = (errors[result.errorType] || 0) + 1;
+    return errors;
+  }, {});
+}
+
+function summarizeThroughput(totalRequests, successCount, startedAt, completedAt) {
+  const elapsedSeconds = Math.max(0.001, (completedAt.getTime() - Date.parse(startedAt)) / 1000);
+  return { elapsedSeconds: round(elapsedSeconds), successRpm: round((successCount / elapsedSeconds) * 60), overallRps: round(totalRequests / elapsedSeconds) };
+}
+
+function summarizeConcurrency(results) {
+  const values = results.map((result) => result.activeRequests || 1);
+  return { max: Math.max(0, ...values), avg: avg(values) };
+}
+
+function avg(values) {
+  if (!values.length) return 0;
+  return round(values.reduce((total, value) => total + value, 0) / values.length);
+}
+
+function round(value) {
+  return Math.round(value * 100) / 100;
 }
 
 function percentile(values, target) {

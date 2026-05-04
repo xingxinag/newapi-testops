@@ -75,6 +75,48 @@ test('POST /api/jobs runs live probes for concurrency multiplied by duration', a
   }
 });
 
+test('POST /api/jobs records rich live benchmark metrics from real samples', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const upstream = await startJsonUpstream({ statuses: [200, 429, 200, 429] });
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: upstream.baseUrl, apiKey: 'live-secret', model: 'live-model', mode: 'text', concurrency: 2, durationSeconds: 2, executionMode: 'live' }),
+    });
+    assert.equal(response.status, 201);
+    const json = await response.json();
+    assert.equal(json.data.summary.totalRequests, 4);
+    assert.equal(json.data.summary.successCount, 2);
+    assert.equal(json.data.summary.rateLimitedCount, 2);
+    assert.equal(json.data.summary.throughput.successRpm > 0, true);
+    assert.equal(json.data.summary.throughput.overallRps > 0, true);
+    assert.equal(json.data.summary.latencyMs.avg > 0, true);
+    assert.equal(json.data.summary.latencyMs.p90 >= json.data.summary.latencyMs.p50, true);
+    assert.equal(json.data.summary.latencyMs.p99 >= json.data.summary.latencyMs.p90, true);
+    assert.equal(json.data.summary.responseBytes.avg > 0, true);
+    assert.equal(json.data.summary.responseBytes.p90 >= json.data.summary.responseBytes.p50, true);
+    assert.equal(json.data.summary.errors.status_429, 2);
+    assert.equal(json.data.summary.concurrency.max, 2);
+    assert.equal(json.data.summary.concurrency.avg > 0, true);
+    assert.equal(json.data.summary.ttfb.avg > 0, true);
+    assert.equal(json.data.summary.queueLatency.avg >= 0, true);
+
+    const artifactResponse = await fetch(`http://127.0.0.1:${port}/api/jobs/${json.data.runId}/artifacts/response.json`);
+    const artifact = await artifactResponse.json();
+    assert.equal(artifact.samples.length, 4);
+    assert.equal(artifact.samples[0].responseBytes > 0, true);
+    assert.equal(artifact.samples[0].ttfbMs > 0, true);
+    assert.equal(artifact.samples[0].activeRequests >= 1, true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await upstream.close();
+  }
+});
+
 test('GET /api/jobs/:runId/artifacts/:name returns stored artifact JSON', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
   const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
@@ -146,7 +188,8 @@ test('OPTIONS preflight allows JSON API requests from static frontends', async (
       },
     });
     assert.equal(response.status, 204);
-    assert.equal(response.headers.get('access-control-allow-origin'), '*');
+    assert.equal(response.headers.get('access-control-allow-origin'), 'http://127.0.0.1:8795');
+    assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
     assert.match(response.headers.get('access-control-allow-methods'), /POST/);
     assert.match(response.headers.get('access-control-allow-headers'), /content-type/i);
   } finally {
@@ -154,16 +197,19 @@ test('OPTIONS preflight allows JSON API requests from static frontends', async (
   }
 });
 
-async function startJsonUpstream() {
+async function startJsonUpstream(options = {}) {
   const http = await import('node:http');
   const requests = [];
+  let count = 0;
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     requests.push({ headers: req.headers, body });
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, model: body.model, received: true }));
+    const status = options.statuses ? options.statuses[count % options.statuses.length] : 200;
+    count += 1;
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: status >= 200 && status < 300, model: body.model, received: true, usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
