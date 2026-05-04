@@ -52,7 +52,8 @@ newapi-testops/
   Dockerfile.web         # 静态 Web 镜像
   compose.yaml           # Docker Compose 一键部署
 ```
-
+## 页面展示
+![bvH9.jpg](https://a1.ax1x.com/2026/05/04/bvH9.jpg)
 ## 本地开发：从零开始运行
 
 ### 1. 安装依赖
