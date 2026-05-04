@@ -5,9 +5,12 @@ body { margin: 0; }
 .eyebrow { margin: 0 0 8px; color: #2563eb; font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
 h1 { margin: 0; font-size: clamp(32px, 6vw, 64px); line-height: .95; max-width: 760px; }
 h2 { margin-top: 0; }
+h3 { margin: 0; font-size: 14px; }
+code { border-radius: 8px; background: #f1f5f9; color: #0f172a; padding: 2px 6px; font-size: 12px; }
 .muted { color: #64748b; }
 .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
-.card, .score { background: rgba(255,255,255,.88); border: 1px solid #dbe3ef; border-radius: 22px; box-shadow: 0 18px 60px rgba(15, 23, 42, .08); padding: 22px; }
+.sidebar-stack, .main-stack { display: grid; gap: 20px; align-items: start; }
+.card, .score { min-width: 0; background: rgba(255,255,255,.88); border: 1px solid #dbe3ef; border-radius: 22px; box-shadow: 0 18px 60px rgba(15, 23, 42, .08); padding: 22px; }
 .score { min-width: 150px; text-align: center; }
 .score span { display: block; font-size: 56px; font-weight: 900; color: #0f766e; }
 label { display: grid; gap: 6px; margin: 12px 0; font-size: 13px; font-weight: 700; color: #334155; }
@@ -17,16 +20,53 @@ legend { padding: 0 6px; color: #64748b; font-size: 12px; font-weight: 800; lett
 input, select { height: 42px; border-radius: 12px; border: 1px solid #cbd5e1; padding: 0 12px; font: inherit; }
 button { width: 100%; height: 44px; border: 0; border-radius: 12px; background: #0f172a; color: white; font-weight: 800; cursor: pointer; }
 button.secondary { margin-top: 10px; background: #2563eb; }
+.auth-form, .team-form { display: grid; gap: 10px; }
+.button-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.button-row button.secondary, .compact-button { margin-top: 0; }
+.compact-button { margin-top: 12px; }
+.account-summary { border: 1px solid #e2e8f0; border-radius: 16px; background: #f8fafc; padding: 14px; }
+.account-summary p { margin: 0 0 6px; font-size: 13px; }
+.account-summary strong { display: block; color: #0f172a; word-break: break-word; }
+.team-empty { margin-bottom: 0; font-size: 13px; }
+.form-intro, .section-note { margin-top: -6px; font-size: 13px; }
+.action-panel { border-radius: 16px; background: #f8fafc; padding: 14px; margin: 14px 0; }
+.action-panel p { margin: 8px 0 12px; font-size: 13px; }
+.immediate-panel { border: 1px solid #dbe3ef; }
+.schedule-panel { background: #eff6ff; border-color: #bfdbfe; }
 .jobs { display: grid; gap: 14px; }
-.job { border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; background: #fff; }
-.job header { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; }
+.history-card .jobs { max-height: 880px; overflow: auto; padding-right: 4px; }
+.job { min-width: 0; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; background: #fff; }
+.job header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.job header strong { overflow-wrap: anywhere; }
 .job header b { color: #0f766e; }
 .artifacts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .artifacts a { border-radius: 999px; background: #eff6ff; color: #2563eb; font-size: 12px; font-weight: 800; padding: 6px 10px; text-decoration: none; }
+.link-group { margin-top: 12px; }
+.link-group h3 { color: #334155; }
+.export-group { border: 1px solid #dbe3ef; border-radius: 12px; background: #f8fafc; padding: 10px; }
+.export-group .artifacts a { background: #ecfdf5; color: #0f766e; }
+.benchmark-report { margin-top: 12px; border: 1px solid #dbe3ef; border-radius: 12px; background: #f8fafc; padding: 10px; }
+.benchmark-report summary { color: #334155; cursor: pointer; font-size: 14px; font-weight: 800; }
+.benchmark-report summary:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; border-radius: 8px; }
+.report-group h4 { color: #334155; }
+.report-groups { display: grid; gap: 10px; margin-top: 10px; }
+.report-group { min-width: 0; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; padding: 10px; }
+.report-group h4 { margin: 0 0 8px; font-size: 12px; }
+.report-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.report-metric { display: grid; gap: 3px; border-radius: 10px; background: #f8fafc; padding: 8px 10px; font-size: 12px; }
+.report-metric span { color: #64748b; font-weight: 800; }
+.report-metric strong { color: #0f172a; word-break: break-word; }
+.trends { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.trend-metric { min-width: 0; border: 1px solid #e2e8f0; border-radius: 16px; padding: 14px; background: #fff; }
+.trend-metric header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 10px; color: #64748b; font-size: 13px; font-weight: 800; }
+.trend-metric strong { color: #0f766e; font-size: 24px; }
+.trend-metric svg { display: block; width: 100%; height: 52px; overflow: visible; }
+.trend-metric polyline { fill: none; stroke: #2563eb; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.trend-empty { min-height: 52px; display: grid; place-items: center; font-size: 13px; background: #f8fafc; border-radius: 10px; }
 .job ul { padding: 0; margin: 10px 0 0; list-style: none; display: grid; gap: 8px; }
 .job li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 10px; background: #f8fafc; font-size: 13px; }
 .job li.pass { border-left: 4px solid #16a34a; }
 .job li.warning { border-left: 4px solid #f59e0b; }
 .job li.fail { border-left: 4px solid #dc2626; }
 .error { color: #dc2626; }
-@media (max-width: 860px) { .hero, .grid { grid-template-columns: 1fr; display: grid; } }
+@media (max-width: 860px) { .hero, .grid { grid-template-columns: 1fr; display: grid; } .trends, .report-grid { grid-template-columns: 1fr; } }
