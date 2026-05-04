@@ -11,6 +11,11 @@ import { createAndRunJob } from './jobs.mjs';
 export function createApiServer(options = {}) {
   const dataDir = options.dataDir || process.env.DATA_DIR || './data';
   const authRequired = options.authRequired ?? process.env.AUTH_REQUIRED === 'true';
+  const cookieOptions = options.cookieOptions || {
+    sameSite: process.env.SESSION_COOKIE_SAMESITE || 'Lax',
+    secure: process.env.SESSION_COOKIE_SECURE === 'true',
+    domain: process.env.SESSION_COOKIE_DOMAIN || '',
+  };
   const store = createArtifactStore({ dataDir, artifactDir: options.artifactDir || process.env.ARTIFACT_LOCAL_DIR || './data/artifacts' });
   const auth = createAuthStore({ dataDir });
   const server = http.createServer(async (req, res) => {
@@ -19,10 +24,14 @@ export function createApiServer(options = {}) {
       if (req.method === 'OPTIONS') return cors(req, res);
       if (req.method === 'GET' && url.pathname === '/api/health') return json(req, res, 200, { success: true, service: 'newapi-testops-api' });
       const current = await currentAuth(req, auth);
-      if (req.method === 'POST' && url.pathname === '/api/auth/register') return await register(req, res, auth);
-      if (req.method === 'POST' && url.pathname === '/api/auth/login') return await login(req, res, auth);
-      if (req.method === 'POST' && url.pathname === '/api/auth/logout') return await logout(req, res, auth);
+      if (req.method === 'POST' && url.pathname === '/api/auth/register') return await register(req, res, auth, cookieOptions);
+      if (req.method === 'POST' && url.pathname === '/api/auth/login') return await login(req, res, auth, cookieOptions);
+      if (req.method === 'POST' && url.pathname === '/api/auth/logout') return await logout(req, res, auth, cookieOptions);
       if (req.method === 'GET' && url.pathname === '/api/auth/me') return await me(req, res, current, authRequired);
+      if (req.method === 'GET' && url.pathname === '/api/teams') {
+        const user = requireUser(current);
+        return json(req, res, 200, { success: true, data: await auth.userTeams(user.id) });
+      }
       if (req.method === 'POST' && url.pathname === '/api/teams') {
         const user = requireUser(current);
         const team = await auth.createTeam({ ...(await readJson(req)), ownerUserId: user.id });
@@ -100,23 +109,23 @@ export function createApiServer(options = {}) {
   return server;
 }
 
-async function register(req, res, auth) {
+async function register(req, res, auth, cookieOptions) {
   const user = await auth.createUser(await readJson(req));
   const session = await auth.createSession(user.id);
-  return json(req, res, 201, { success: true, data: publicUser(user) }, { 'set-cookie': sessionCookie(session.id) });
+  return json(req, res, 201, { success: true, data: publicUser(user) }, { 'set-cookie': sessionCookie(session.id, cookieOptions) });
 }
 
-async function login(req, res, auth) {
+async function login(req, res, auth, cookieOptions) {
   const body = await readJson(req);
   const user = await auth.findUserByEmail(body.email);
   if (!user || !await auth.verifyPassword(user, body.password)) throw statusError(401, 'Invalid email or password');
   const session = await auth.createSession(user.id);
-  return json(req, res, 200, { success: true, data: publicUser(user) }, { 'set-cookie': sessionCookie(session.id) });
+  return json(req, res, 200, { success: true, data: publicUser(user) }, { 'set-cookie': sessionCookie(session.id, cookieOptions) });
 }
 
-async function logout(req, res, auth) {
+async function logout(req, res, auth, cookieOptions) {
   await auth.deleteSession(parseSessionId(req.headers.cookie || ''));
-  return json(req, res, 200, { success: true }, { 'set-cookie': clearSessionCookie() });
+  return json(req, res, 200, { success: true }, { 'set-cookie': clearSessionCookie(cookieOptions) });
 }
 
 async function me(req, res, current, authRequired) {

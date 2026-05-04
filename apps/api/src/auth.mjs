@@ -98,6 +98,11 @@ export function createAuthStore({ dataDir = './data' } = {}) {
     async userTeamIds(userId) {
       return (await this.readMemberships()).filter((membership) => membership.userId === userId).map((membership) => membership.teamId);
     },
+    async userTeams(userId) {
+      const memberships = await this.readMemberships();
+      const membershipByTeamId = new Map(memberships.filter((membership) => membership.userId === userId).map((membership) => [membership.teamId, membership]));
+      return (await this.readTeams()).filter((team) => membershipByTeamId.has(team.id)).map((team) => ({ ...team, role: membershipByTeamId.get(team.id).role }));
+    },
     async isTeamMember(userId, teamId) {
       return (await this.readMemberships()).some((membership) => membership.userId === userId && membership.teamId === teamId);
     },
@@ -108,12 +113,20 @@ export function publicUser(user) {
   return user ? { id: user.id, email: user.email, createdAt: user.createdAt } : null;
 }
 
-export function sessionCookie(sessionId) {
-  return `sid=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/`;
+export function sessionCookie(sessionId, options = {}) {
+  return `sid=${encodeURIComponent(sessionId)}; ${cookieAttributes(options)}`;
 }
 
-export function clearSessionCookie() {
-  return 'sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0';
+export function clearSessionCookie(options = {}) {
+  return `sid=; ${cookieAttributes(options)}; Max-Age=0`;
+}
+
+function cookieAttributes(options = {}) {
+  const sameSite = options.sameSite || 'Lax';
+  const parts = ['HttpOnly', `SameSite=${sameSite}`, 'Path=/'];
+  if (options.secure) parts.push('Secure');
+  if (options.domain) parts.push(`Domain=${options.domain}`);
+  return parts.join('; ');
 }
 
 export function parseSessionId(cookieHeader = '') {

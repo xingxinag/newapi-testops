@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApiServer } from '../src/server.mjs';
-import { createAuthStore } from '../src/auth.mjs';
+import { createAuthStore, sessionCookie } from '../src/auth.mjs';
 
 test('auth store hashes passwords with scrypt and never stores plaintext', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-auth-'));
@@ -20,6 +20,16 @@ test('auth store hashes passwords with scrypt and never stores plaintext', async
   assert.match(users[0].passwordHash, /^scrypt:/);
   assert.equal(await auth.verifyPassword(user, 'correct horse battery staple'), true);
   assert.equal(await auth.verifyPassword(user, 'wrong password'), false);
+});
+
+test('session cookies can be configured for cross-site static frontend deployments', () => {
+  const cookie = sessionCookie('session_demo', { sameSite: 'None', secure: true, domain: '.example.com' });
+
+  assert.match(cookie, /sid=session_demo/);
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /SameSite=None/i);
+  assert.match(cookie, /Secure/i);
+  assert.match(cookie, /Domain=\.example\.com/i);
 });
 
 test('register, login, me, and logout use server-side HttpOnly session cookies', async () => {
@@ -95,6 +105,21 @@ test('AUTH_REQUIRED protects jobs and valid sessions restore access', async () =
     assert.equal((await fetch(`${fixture.baseUrl}/api/jobs/${created.body.data.runId}/export.csv`)).status, 401);
     assert.equal((await fetch(`${fixture.baseUrl}/api/jobs/${created.body.data.runId}/artifacts/request.json`, { headers: { cookie: registered.cookie } })).status, 200);
     assert.equal((await fetch(`${fixture.baseUrl}/api/jobs/${created.body.data.runId}/export.csv`, { headers: { cookie: registered.cookie } })).status, 200);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('GET /api/teams returns teams available to the logged-in user', async () => {
+  const fixture = await startServer({ authRequired: true });
+  try {
+    const owner = await postJson(fixture.baseUrl, '/api/auth/register', { email: 'team-list-owner@example.com', password: 'secret-passphrase' });
+    const team = await postJson(fixture.baseUrl, '/api/teams', { name: 'Visible Team' }, owner.cookie);
+    assert.equal(team.response.status, 201);
+
+    const teams = await getJson(fixture.baseUrl, '/api/teams', owner.cookie);
+    assert.equal(teams.response.status, 200);
+    assert.deepEqual(teams.body.data.map((item) => ({ id: item.id, name: item.name, role: item.role })), [{ id: team.body.data.id, name: 'Visible Team', role: 'owner' }]);
   } finally {
     await fixture.close();
   }
