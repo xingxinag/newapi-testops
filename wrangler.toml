@@ -1,0 +1,2 @@
+name = "newapi-testops"
+pages_build_output_dir = "dist/web"
