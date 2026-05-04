@@ -29,9 +29,10 @@ NewAPI TestOps 是一个前后端分离的 NewAPI 测试与状态观测平台 MV
 | CORS 预检支持 | 已完成 |
 | Docker Compose 自托管 | 已完成 |
 | Docker Hub 镜像 | 已发布 |
+| 账号注册/登录 | 已完成 |
+| 团队创建/成员共享 | 已完成 |
 | R2/S3 真正上传适配器 | 后续增强 |
 | 后台 cron worker | 后续增强 |
-| 权限/登录系统 | 后续增强 |
 
 ## 项目结构
 
@@ -152,10 +153,30 @@ S3_SECRET_ACCESS_KEY=
 
 - 任务历史：`data/jobs.json`
 - 调度历史：`data/schedules.json`
-- 可选登录/团队数据：`data/users.json`、`data/sessions.json`、`data/teams.json`、`data/memberships.json`
+- 账号数据：`data/users.json`
+- 会话数据：`data/sessions.json`
+- 团队数据：`data/teams.json`
+- 团队成员关系：`data/memberships.json`
 - artifact：`data/artifacts/<runId>/request.json` 等
 
-默认 `AUTH_REQUIRED=false`，本地 API 保持开放。设置 `AUTH_REQUIRED=true` 后，`jobs`、`schedules`、`artifacts`、`exports`、`analytics` 需要先通过 `/api/auth/register` 或 `/api/auth/login` 获取 HttpOnly 会话 Cookie；可用 `/api/auth/me` 查看当前用户，`/api/auth/logout` 注销。团队共享使用 `GET /api/teams` 查看当前用户团队，`POST /api/teams` 创建团队，再用 `POST /api/teams/<teamId>/members` 按邮箱添加已注册用户。`r`n`r`n如果静态前端和 API 是不同站点，例如 Vercel/Cloudflare Pages/GitHub Pages 前端访问独立 API 域名，浏览器要求跨站 Cookie 使用 `SameSite=None; Secure`。这时 API 环境变量应设置：`r`n`r`n```env`r`nAUTH_REQUIRED=true`r`nSESSION_COOKIE_SAMESITE=None`r`nSESSION_COOKIE_SECURE=true`r`nSESSION_COOKIE_DOMAIN=`r`n```
+账号密码保存在本地 JSON 文件中。密码不会明文保存，后端使用 `scrypt` 做哈希。注册、登录和 `/api/auth/me` 返回的都是公开用户信息，不返回密码哈希、盐值或会话密钥。
+
+会话使用名为 `sid` 的 Cookie。这个 Cookie 是 `HttpOnly`，浏览器脚本不能读取。`SESSION_COOKIE_SAMESITE`、`SESSION_COOKIE_SECURE`、`SESSION_COOKIE_DOMAIN` 可以控制 Cookie 的 `SameSite`、`Secure` 和 `Domain` 属性。
+
+默认 `AUTH_REQUIRED=false`，API 处于开放模式，创建任务、查看任务、读取 artifact、导出和分析接口都不要求登录。设置 `AUTH_REQUIRED=true` 后，`jobs`、`schedules`、`artifacts`、`exports`、`analytics` 相关接口需要先通过 `/api/auth/register` 或 `/api/auth/login` 获取 `sid` 会话 Cookie，再带着 Cookie 访问。
+
+团队共享已经可用。`GET /api/teams` 查看当前用户所在团队，`POST /api/teams` 创建团队，创建者是 `owner`。`POST /api/teams/<teamId>/members` 通过已注册邮箱添加成员，成员角色为 `member`。创建任务或调度时可以传 `teamId`，这类团队归属的 jobs/schedules 在 `AUTH_REQUIRED=true` 时只允许团队成员访问。
+
+如果静态前端和 API 是不同站点，例如 Vercel / Cloudflare Pages / GitHub Pages 前端访问独立 API 域名，浏览器要求跨站 Cookie 使用 `SameSite=None; Secure`。这时 API 环境变量应设置：
+
+```env
+AUTH_REQUIRED=true
+SESSION_COOKIE_SAMESITE=None
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_DOMAIN=
+```
+
+如果前端和 API 使用同一个站点或同一个父域，可以按部署域名决定是否设置 `SESSION_COOKIE_DOMAIN`。本地开发通常保持空值即可。
 
 `S3_*` 变量是为后续 R2/S3 适配预留的，当前版本不会真正上传到对象存储。
 
@@ -189,6 +210,64 @@ curl http://127.0.0.1:8788/api/health
 }
 ```
 
+### 注册账号
+
+注册成功后，后端会写入 `data/users.json` 和 `data/sessions.json`，并通过 `Set-Cookie` 返回 `sid` 会话 Cookie。下面用 `cookies.txt` 保存 Cookie，方便后续请求复用。
+
+```bash
+curl -i -c cookies.txt -X POST http://127.0.0.1:8788/api/auth/register \
+  -H "content-type: application/json" \
+  -d '{"email":"alice@example.com","password":"alice-password","name":"Alice"}'
+```
+
+### 登录账号
+
+```bash
+curl -i -c cookies.txt -X POST http://127.0.0.1:8788/api/auth/login \
+  -H "content-type: application/json" \
+  -d '{"email":"alice@example.com","password":"alice-password"}'
+```
+
+### 查看当前登录用户
+
+```bash
+curl -b cookies.txt http://127.0.0.1:8788/api/auth/me
+```
+
+返回的是公开用户信息，不包含密码哈希或会话密钥。
+
+### 注销登录
+
+```bash
+curl -i -b cookies.txt -c cookies.txt -X POST http://127.0.0.1:8788/api/auth/logout
+```
+
+### 查看团队列表
+
+```bash
+curl -b cookies.txt http://127.0.0.1:8788/api/teams
+```
+
+### 创建团队
+
+```bash
+curl -X POST http://127.0.0.1:8788/api/teams \
+  -b cookies.txt \
+  -H "content-type: application/json" \
+  -d '{"name":"QA Team"}'
+```
+
+### 添加团队成员
+
+把 `<teamId>` 换成创建团队后返回的团队 ID。被添加的人需要先注册账号。
+
+```bash
+curl -X POST http://127.0.0.1:8788/api/teams/<teamId>/members \
+  -b cookies.txt \
+  -H "content-type: application/json" \
+  -d '{"email":"bob@example.com"}'
+```
+
 ### 创建 synthetic 测试任务
 
 synthetic 模式不会真的请求上游 API，适合本地安全验证。
@@ -197,6 +276,15 @@ synthetic 模式不会真的请求上游 API，适合本地安全验证。
 curl -X POST http://127.0.0.1:8788/api/jobs \
   -H "content-type: application/json" \
   -d '{"baseUrl":"https://api.example.com","apiKey":"demo-secret","model":"demo-model","mode":"text","concurrency":2,"durationSeconds":2}'
+```
+
+如果 `AUTH_REQUIRED=true`，需要带上登录 Cookie。团队任务可以额外传 `teamId`：
+
+```bash
+curl -X POST http://127.0.0.1:8788/api/jobs \
+  -b cookies.txt \
+  -H "content-type: application/json" \
+  -d '{"teamId":"<teamId>","baseUrl":"https://api.example.com","apiKey":"demo-secret","model":"demo-model","mode":"text","concurrency":2,"durationSeconds":2}'
 ```
 
 ### 创建 live 真实测试任务
@@ -235,6 +323,15 @@ curl http://127.0.0.1:8788/api/jobs/<runId>/artifacts/report.json
 curl -X POST http://127.0.0.1:8788/api/schedules \
   -H "content-type: application/json" \
   -d '{"name":"hourly sample","intervalSeconds":3600,"input":{"baseUrl":"https://api.example.com","apiKey":"demo-secret","model":"demo-model","mode":"text","concurrency":1,"durationSeconds":1}}'
+```
+
+创建团队调度时同样可以传 `teamId`：
+
+```bash
+curl -X POST http://127.0.0.1:8788/api/schedules \
+  -b cookies.txt \
+  -H "content-type: application/json" \
+  -d '{"teamId":"<teamId>","name":"team sample","intervalSeconds":3600,"input":{"baseUrl":"https://api.example.com","apiKey":"demo-secret","model":"demo-model","mode":"text","concurrency":1,"durationSeconds":1}}'
 ```
 
 查看调度：
@@ -554,7 +651,6 @@ docker compose down
 - 接入 Cloudflare R2 / S3，把 artifact 上传到对象存储。
 - 增加真正后台 scheduler/cron worker。
 - 增加更丰富的趋势图、成功率图、延迟分位图。
-- 增加登录、权限、团队共享。
 - 增加导出 ZIP/CSV/HTML 报告。
 
 
