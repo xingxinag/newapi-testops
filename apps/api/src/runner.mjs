@@ -24,12 +24,13 @@ export async function runSyntheticJob(input, store, now = new Date()) {
     queueLatencyMs: Math.round(input.concurrency * 3),
     tokens: { input: 128, output: input.mode === 'text' ? 64 : 0, total: input.mode === 'text' ? 192 : 128 },
   };
-  const requestRecord = { url: buildRequestUrl(input), headers: requestHeaders, body: requestBody };
+  const target = buildTarget(input);
+  const requestRecord = { url: target.finalUrl, headers: requestHeaders, body: requestBody };
   const responseRecord = { statusCode, headers: { 'content-type': 'application/json' }, body: responseBody };
   const artifacts = [
     await store.putArtifact(input.runId, 'request.json', requestRecord),
     await store.putArtifact(input.runId, 'response.json', responseRecord),
-    await store.putArtifact(input.runId, 'report.json', { summary, checks, score }),
+    await store.putArtifact(input.runId, 'report.json', { summary, checks, score, target }),
   ];
   return {
     runId: input.runId,
@@ -52,7 +53,8 @@ async function runLiveJob(input, store, now = new Date()) {
   const requestBody = buildRequestBody(input);
   const rawHeaders = buildRequestHeaders(input, requestBody);
   const requestHeaders = redactHeaders(rawHeaders);
-  const url = buildRequestUrl(input);
+  const target = buildTarget(input);
+  const url = target.finalUrl;
   const totalRequests = input.concurrency * input.durationSeconds;
   const results = await runLiveRequests(totalRequests, input.concurrency, url, input.endpointMethod || 'POST', rawHeaders, requestBody);
   const firstResult = results[0];
@@ -92,11 +94,11 @@ async function runLiveJob(input, store, now = new Date()) {
     tokens: tokenTotals,
   };
   const requestRecord = { url, headers: requestHeaders, body: requestBody };
-  const responseRecord = { statusCode, headers: firstResult.headers, body: parsedBody, samples: results.map((result, index) => ({ index: index + 1, statusCode: result.statusCode, latencyMs: result.latencyMs, ttfbMs: result.ttfbMs, queueLatencyMs: result.queueLatencyMs, responseBytes: result.responseBytes, errorType: result.errorType, activeRequests: result.activeRequests })) };
+  const responseRecord = { statusCode, headers: firstResult.headers, body: parsedBody, samples: results.map((result, index) => ({ index: index + 1, statusCode: result.statusCode, latencyMs: result.latencyMs, ttfbMs: result.ttfbMs, queueLatencyMs: result.queueLatencyMs, responseBytes: result.responseBytes, errorType: result.errorType, errorMessage: result.errorMessage, bodyPreview: result.bodyPreview, activeRequests: result.activeRequests })) };
   const artifacts = [
     await store.putArtifact(input.runId, 'request.json', requestRecord),
     await store.putArtifact(input.runId, 'response.json', responseRecord),
-    await store.putArtifact(input.runId, 'report.json', { summary, checks, score }),
+    await store.putArtifact(input.runId, 'report.json', { summary, checks, score, target }),
   ];
   return {
     runId: input.runId,
@@ -159,6 +161,8 @@ async function runOneLiveRequest(url, method, headers, body, sampleContext = {})
       queueLatencyMs: round(queueLatencyMs),
       responseBytes: Buffer.byteLength(bodyText),
       errorType: response.status >= 200 && response.status < 300 ? null : `status_${response.status}`,
+      errorMessage: response.status >= 200 && response.status < 300 ? null : extractErrorMessage(parseBody(bodyText)),
+      bodyPreview: previewBody(bodyText),
       activeRequests: sampleContext.activeRequests || 1,
     };
   } catch (error) {
@@ -173,6 +177,8 @@ async function runOneLiveRequest(url, method, headers, body, sampleContext = {})
       queueLatencyMs: round(queueLatencyMs),
       responseBytes: Buffer.byteLength(bodyText),
       errorType: error.name || 'request_error',
+      errorMessage: error.message,
+      bodyPreview: previewBody(bodyText),
       activeRequests: sampleContext.activeRequests || 1,
     };
   }
@@ -224,6 +230,19 @@ function parseBody(text) {
   }
 }
 
+function extractErrorMessage(body) {
+  if (typeof body === 'string') return body;
+  if (body?.error?.message) return String(body.error.message);
+  if (body?.message) return String(body.message);
+  if (body?.error) return typeof body.error === 'string' ? body.error : JSON.stringify(body.error);
+  return JSON.stringify(body);
+}
+
+function previewBody(text, maxLength = 2048) {
+  const body = String(text || '');
+  return body.length > maxLength ? `${body.slice(0, maxLength)}...` : body;
+}
+
 function extractUsage(body) {
   const usage = body && typeof body === 'object' ? body.usage || {} : {};
   const input = Number(usage.prompt_tokens || usage.input_tokens || 0);
@@ -252,6 +271,11 @@ function buildRequestHeaders(input, body) {
 
 function buildRequestUrl(input) {
   return `${input.baseUrl}${resolveEndpoint(input).replace('{model}', encodeURIComponent(input.model))}`;
+}
+
+function buildTarget(input) {
+  const endpoint = resolveEndpoint(input);
+  return { endpoint, method: input.endpointMethod || 'POST', finalUrl: `${input.baseUrl}${endpoint.replace('{model}', encodeURIComponent(input.model))}` };
 }
 
 function resolveEndpoint(input) {

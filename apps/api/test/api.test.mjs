@@ -117,6 +117,43 @@ test('POST /api/jobs records rich live benchmark metrics from real samples', asy
   }
 });
 
+test('POST /api/jobs records failed live probe error samples and target report details', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const upstreamMessage = 'upstream exploded while processing chat completion';
+  const upstream = await startJsonUpstream({ statuses: [500], responseBody: { error: { message: upstreamMessage } } });
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: upstream.baseUrl, apiKey: 'live-secret', model: 'live-model', mode: 'text', concurrency: 1, durationSeconds: 1, executionMode: 'live' }),
+    });
+
+    assert.equal(response.status, 201);
+    const json = await response.json();
+    assert.equal(json.data.status, 'failed');
+
+    const responseArtifact = await (await fetch(`http://127.0.0.1:${port}/api/jobs/${json.data.runId}/artifacts/response.json`)).json();
+    assert.equal(responseArtifact.samples.length, 1);
+    assert.equal(responseArtifact.samples[0].errorType, 'status_500');
+    assert.match(responseArtifact.samples[0].errorMessage, new RegExp(upstreamMessage));
+    assert.match(responseArtifact.samples[0].bodyPreview, new RegExp(upstreamMessage));
+    assert.equal(responseArtifact.samples[0].body, undefined);
+
+    const reportArtifact = await (await fetch(`http://127.0.0.1:${port}/api/jobs/${json.data.runId}/artifacts/report.json`)).json();
+    assert.deepEqual(reportArtifact.target, {
+      endpoint: '/v1/chat/completions',
+      method: 'POST',
+      finalUrl: `${upstream.baseUrl}/v1/chat/completions`,
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await upstream.close();
+  }
+});
+
 test('POST /api/models fetches model IDs from /v1/models with bearer auth', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
   const upstream = await startJsonUpstream({ modelsResponse: { data: [{ id: 'alpha' }, { id: 'beta' }] } });
@@ -212,6 +249,8 @@ test('POST /api/schedules creates a sampling schedule and immediately runs one j
     assert.equal(created.data.intervalSeconds, 3600);
     assert.equal(created.data.history.length, 1);
     assert.equal(created.data.lastRunId, created.data.history[0].runId);
+    assert.match(created.data.history[0].startedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(created.data.history[0].completedAt, /^\d{4}-\d{2}-\d{2}T/);
 
     const jobsResponse = await fetch(`http://127.0.0.1:${port}/api/jobs`);
     const jobs = await jobsResponse.json();
@@ -268,7 +307,7 @@ async function startJsonUpstream(options = {}) {
       return;
     }
     const model = body && typeof body === 'object' ? body.model : null;
-    res.end(JSON.stringify({ ok: status >= 200 && status < 300, model, received: true, usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }));
+    res.end(JSON.stringify(options.responseBody || { ok: status >= 200 && status < 300, model, received: true, usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
