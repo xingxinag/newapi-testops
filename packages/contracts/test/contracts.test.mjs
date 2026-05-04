@@ -1,12 +1,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChecklist, redactHeaders, scoreFromChecklist, validateJobInput } from '../src/contracts.mjs';
+import { buildChecklist, ENDPOINT_PRESETS, redactHeaders, scoreFromChecklist, validateJobInput } from '../src/contracts.mjs';
 
 test('validateJobInput normalizes a text test request', () => {
   const input = validateJobInput({ baseUrl: 'https://api.example.com/', model: 'gpt-test', mode: 'text', concurrency: 2, durationSeconds: 3 });
   assert.equal(input.baseUrl, 'https://api.example.com');
   assert.equal(input.endpoint, '/v1/chat/completions');
   assert.equal(input.concurrency, 2);
+});
+
+test('validateJobInput applies endpoint presets with method and path metadata', () => {
+  const input = validateJobInput({
+    baseUrl: 'https://api.example.com',
+    model: 'gpt-test',
+    mode: 'text',
+    endpointPreset: 'models-list',
+  });
+
+  assert.equal(input.endpointPreset, 'models-list');
+  assert.equal(input.endpointMethod, 'GET');
+  assert.equal(input.endpoint, '/v1/models');
+});
+
+test('validateJobInput preserves default endpoint compatibility for existing modes', () => {
+  assert.equal(validateJobInput({ baseUrl: 'x', model: 'm', mode: 'image' }).endpoint, '/v1/images/generations');
+  assert.equal(validateJobInput({ baseUrl: 'x', model: 'm', mode: 'aspect-ratio' }).endpoint, '/v1beta/models/{model}:generateContent');
+});
+
+test('validateJobInput rejects unsupported endpoint preset', () => {
+  assert.throws(() => validateJobInput({ baseUrl: 'x', model: 'm', mode: 'text', endpointPreset: 'bad-preset' }), /endpointPreset must be one of/);
+});
+
+test('ENDPOINT_PRESETS exports the core endpoint preset names', () => {
+  assert.deepEqual(ENDPOINT_PRESETS, [
+    'models-list',
+    'openai-chat',
+    'openai-responses',
+    'claude-messages',
+    'gemini-generate-content',
+    'openai-image-generation',
+  ]);
 });
 
 test('validateJobInput rejects unsupported mode', () => {

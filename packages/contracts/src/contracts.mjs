@@ -2,6 +2,29 @@ export const TEST_MODES = ['text', 'image', 'aspect-ratio'];
 export const EXECUTION_MODES = ['synthetic', 'live'];
 export const JOB_STATUSES = ['queued', 'running', 'completed', 'failed'];
 export const CHECK_STATUSES = ['pass', 'warning', 'fail'];
+export const ENDPOINT_PRESETS = [
+  'models-list',
+  'openai-chat',
+  'openai-responses',
+  'claude-messages',
+  'gemini-generate-content',
+  'openai-image-generation',
+];
+
+const ENDPOINT_TARGETS = {
+  'models-list': { method: 'GET', endpoint: '/v1/models' },
+  'openai-chat': { method: 'POST', endpoint: '/v1/chat/completions' },
+  'openai-responses': { method: 'POST', endpoint: '/v1/responses' },
+  'claude-messages': { method: 'POST', endpoint: '/v1/messages' },
+  'gemini-generate-content': { method: 'POST', endpoint: '/v1beta/models/{model}:generateContent' },
+  'openai-image-generation': { method: 'POST', endpoint: '/v1/images/generations' },
+};
+
+const MODE_DEFAULT_PRESETS = {
+  text: 'openai-chat',
+  image: 'openai-image-generation',
+  'aspect-ratio': 'gemini-generate-content',
+};
 
 export function createRunId(date = new Date()) {
   const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
@@ -43,6 +66,8 @@ export function validateJobInput(input) {
   if (!body.baseUrl || typeof body.baseUrl !== 'string') errors.push('baseUrl is required');
   if (!body.model || typeof body.model !== 'string') errors.push('model is required');
   if (!TEST_MODES.includes(body.mode)) errors.push(`mode must be one of ${TEST_MODES.join(', ')}`);
+  const endpointPreset = normalizeEndpointPreset(body.mode, body.endpointPreset);
+  if (body.endpointPreset && !ENDPOINT_TARGETS[body.endpointPreset]) errors.push(`endpointPreset must be one of ${ENDPOINT_PRESETS.join(', ')}`);
   const executionMode = body.executionMode || 'synthetic';
   if (!EXECUTION_MODES.includes(executionMode)) errors.push(`executionMode must be one of ${EXECUTION_MODES.join(', ')}`);
   const concurrency = Number(body.concurrency ?? 1);
@@ -60,7 +85,9 @@ export function validateJobInput(input) {
     mode: body.mode,
     executionMode,
     model: body.model.trim(),
-    endpoint: body.endpoint || defaultEndpoint(body.mode),
+    endpointPreset,
+    endpointMethod: body.endpoint ? 'POST' : ENDPOINT_TARGETS[endpointPreset].method,
+    endpoint: body.endpoint || ENDPOINT_TARGETS[endpointPreset].endpoint,
     concurrency,
     durationSeconds,
     sampling: normalizeSampling(body.sampling),
@@ -86,10 +113,9 @@ export function validateScheduleInput(input) {
   };
 }
 
-function defaultEndpoint(mode) {
-  if (mode === 'text') return '/v1/chat/completions';
-  if (mode === 'image') return '/v1/images/generations';
-  return '/v1beta/models/{model}:generateContent';
+function normalizeEndpointPreset(mode, endpointPreset) {
+  if (endpointPreset) return endpointPreset;
+  return MODE_DEFAULT_PRESETS[mode] || 'openai-chat';
 }
 
 function normalizeSampling(sampling) {
