@@ -385,7 +385,13 @@ WEB_HOST=0.0.0.0 WEB_PORT=4178 npm run start:web
 
 ## 部署方式四：Vercel / Cloudflare Pages / GitHub Pages 静态前端 + 远程 API
 
-前端是纯静态文件，可以部署到任意静态托管平台。
+前端是纯静态文件，可以部署到任意静态托管平台；API 仍需单独部署到 VPS、Docker、Railway、Render、Fly.io 等支持 Node 或 Docker 的平台。
+
+本项目已经提供真实可用的静态托管配置：
+
+- Vercel：`vercel.json`，构建命令 `npm run build`，输出目录 `dist/web`。
+- Cloudflare Pages：`wrangler.toml`，`pages_build_output_dir = "dist/web"`。
+- GitHub Pages：`.github/workflows/pages.yml`，自动构建并发布 `dist/web`。
 
 本地构建：
 
@@ -399,16 +405,33 @@ npm run build
 dist/web
 ```
 
-API 则单独部署到 VPS、Docker、Railway、Render、Fly.io 等支持 Node 或 Docker 的平台。
+### 配置远程 API 地址
 
-如果 API 地址不是默认的 `http://127.0.0.1:8788`，需要在前端加载 `src/app.mjs` 之前注入：
+静态前端默认请求 `http://127.0.0.1:8788`。部署到 Vercel / Cloudflare Pages / GitHub Pages 时，通常需要把 API 地址改成你的公网 API 域名。
 
-```html
-<script>
-  window.__NEWAPI_TESTOPS_API__ = "https://api.your-domain.com";
-</script>
-<script type="module" src="/src/app.mjs"></script>
+构建时设置环境变量：
+
+```bash
+NEWAPI_TESTOPS_API=https://api.your-domain.com npm run build
 ```
+
+构建脚本会生成：
+
+```text
+dist/web/config.js
+```
+
+内容类似：
+
+```js
+window.__NEWAPI_TESTOPS_API__ = "https://api.your-domain.com";
+```
+
+各平台配置建议：
+
+- Vercel：Project Settings -> Environment Variables 添加 `NEWAPI_TESTOPS_API`。
+- Cloudflare Pages：Settings -> Environment variables 添加 `NEWAPI_TESTOPS_API`，Build command 填 `npm run build`。
+- GitHub Pages：Repository Settings -> Secrets and variables -> Actions -> Variables 添加 `NEWAPI_TESTOPS_API`。
 
 ## 部署方式五：GitHub Pages 展示模式
 
@@ -416,9 +439,9 @@ GitHub Pages 只能托管静态前端，不能运行 API。
 
 推荐组合：
 
-1. GitHub Pages 部署 `dist/web`。
+1. GitHub Pages 通过 `.github/workflows/pages.yml` 自动部署 `dist/web`。
 2. API 用 Docker 部署到 VPS。
-3. 在前端注入远程 API 地址。
+3. 在仓库 Actions Variables 里设置 `NEWAPI_TESTOPS_API=https://api.your-domain.com`。
 
 这种方式适合低成本展示和查看测试历史，但真正执行测试仍然依赖后端 API。
 
@@ -529,3 +552,4 @@ docker compose down
 - 增加更丰富的趋势图、成功率图、延迟分位图。
 - 增加登录、权限、团队共享。
 - 增加导出 ZIP/CSV/HTML 报告。
+
