@@ -9,17 +9,13 @@ test('validateJobInput normalizes a text test request', () => {
   assert.equal(input.concurrency, 2);
 });
 
-test('validateJobInput applies endpoint presets with method and path metadata', () => {
-  const input = validateJobInput({
+test('validateJobInput rejects models-list endpoint preset', () => {
+  assert.throws(() => validateJobInput({
     baseUrl: 'https://api.example.com',
     model: 'gpt-test',
     mode: 'text',
     endpointPreset: 'models-list',
-  });
-
-  assert.equal(input.endpointPreset, 'models-list');
-  assert.equal(input.endpointMethod, 'GET');
-  assert.equal(input.endpoint, '/v1/models');
+  }), /endpointPreset must be one of/);
 });
 
 test('validateJobInput preserves default endpoint compatibility for existing modes', () => {
@@ -33,7 +29,6 @@ test('validateJobInput rejects unsupported endpoint preset', () => {
 
 test('ENDPOINT_PRESETS exports the core endpoint preset names', () => {
   assert.deepEqual(ENDPOINT_PRESETS, [
-    'models-list',
     'openai-chat',
     'openai-responses',
     'claude-messages',

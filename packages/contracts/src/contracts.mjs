@@ -3,7 +3,6 @@ export const EXECUTION_MODES = ['synthetic', 'live'];
 export const JOB_STATUSES = ['queued', 'running', 'completed', 'failed'];
 export const CHECK_STATUSES = ['pass', 'warning', 'fail'];
 export const ENDPOINT_PRESETS = [
-  'models-list',
   'openai-chat',
   'openai-responses',
   'claude-messages',
@@ -12,7 +11,6 @@ export const ENDPOINT_PRESETS = [
 ];
 
 const ENDPOINT_TARGETS = {
-  'models-list': { method: 'GET', endpoint: '/v1/models' },
   'openai-chat': { method: 'POST', endpoint: '/v1/chat/completions' },
   'openai-responses': { method: 'POST', endpoint: '/v1/responses' },
   'claude-messages': { method: 'POST', endpoint: '/v1/messages' },
