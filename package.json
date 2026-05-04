@@ -1,0 +1,16 @@
+{
+  "name": "newapi-testops",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "build": "node scripts/build.mjs",
+    "start:api": "node apps/api/src/server.mjs",
+    "start:web": "node apps/web/server.mjs"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

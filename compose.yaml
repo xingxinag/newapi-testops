@@ -1,0 +1,26 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8788
+      DATA_DIR: /data
+      ARTIFACT_LOCAL_DIR: /data/artifacts
+    ports:
+      - "8788:8788"
+    volumes:
+      - newapi-testops-data:/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "4178:80"
+    depends_on:
+      - api
+
+volumes:
+  newapi-testops-data:
