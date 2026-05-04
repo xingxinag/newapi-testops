@@ -26,8 +26,18 @@ document.querySelector('#app').innerHTML = `
           <fieldset>
             <legend>通用测试参数</legend>
             <label>Base URL<input name="baseUrl" value="https://api.example.com" /></label>
-            <label>模型<input name="model" value="demo-model" /></label>
-            <label>端点预设<select name="endpointPreset"><option value="openai-chat">OpenAI ChatCompletions</option><option value="models-list">模型列表</option><option value="openai-responses">OpenAI Responses</option><option value="claude-messages">Claude Messages</option><option value="gemini-generate-content">Gemini generateContent</option><option value="openai-image-generation">OpenAI 图像生成</option></select></label>
+            <label>API Key<input name="apiKey" type="password" placeholder="sk-..." autocomplete="off" /></label>
+            <div class="model-helper-row">
+              <label>模型<input id="model-input" name="model" value="demo-model" list="model-options" /></label>
+              <button type="button" id="fetch-models-button" class="secondary compact-button">获取模型列表</button>
+            </div>
+            <div class="model-list-helper">
+              <label>模型列表端点<select id="model-list-endpoint"><option value="/v1/models">/v1/models</option><option value="/v1beta/models">/v1beta/models</option></select></label>
+              <select id="model-select" hidden aria-label="选择模型"></select>
+              <datalist id="model-options"></datalist>
+              <p id="model-list-status" class="muted">可手动输入模型，或点击按钮从当前 Base URL 获取。</p>
+            </div>
+            <label>端点预设<select name="endpointPreset"><option value="openai-chat">OpenAI ChatCompletions</option><option value="openai-responses">OpenAI Responses</option><option value="claude-messages">Claude Messages</option><option value="gemini-generate-content">Gemini generateContent</option><option value="openai-image-generation">OpenAI 图像生成</option></select></label>
             <label>测试模式<select name="mode"><option value="text">文本</option><option value="image">图像</option><option value="aspect-ratio">宽高比</option></select></label>
             <label>执行方式<select name="executionMode"><option value="synthetic">模拟探测</option><option value="live">真实请求</option></select></label>
             <label>并发数<input name="concurrency" type="number" value="2" min="1" /></label>
@@ -95,6 +105,13 @@ document.querySelector('#schedule-button').addEventListener('click', async () =>
   await Promise.all([loadJobs(), loadSchedules(), loadTrends()]);
 });
 
+document.querySelector('#fetch-models-button').addEventListener('click', fetchModelList);
+
+document.querySelector('#model-select').addEventListener('change', (event) => {
+  const model = event.currentTarget.value;
+  if (model) document.querySelector('#model-input').value = model;
+});
+
 function getJobPayload(formElement) {
   const form = new FormData(formElement);
   const payload = Object.fromEntries(form.entries());
@@ -105,6 +122,40 @@ function getJobPayload(formElement) {
   payload.durationSeconds = Number(payload.durationSeconds);
   payload.retainFullBodies = form.has('retainFullBodies');
   return payload;
+}
+
+async function fetchModelList() {
+  const formElement = document.querySelector('#job-form');
+  const form = new FormData(formElement);
+  const modelSelect = document.querySelector('#model-select');
+  const modelOptions = document.querySelector('#model-options');
+  const endpoint = document.querySelector('#model-list-endpoint').value;
+  setModelListStatus('正在获取模型列表...');
+  modelSelect.hidden = true;
+  modelSelect.innerHTML = '';
+  modelOptions.innerHTML = '';
+  try {
+    const response = await fetch(`${apiBase}/api/models`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      ...protectedFetchOptions(),
+      body: JSON.stringify({ baseUrl: form.get('baseUrl'), apiKey: form.get('apiKey'), endpoint }),
+    });
+    const json = await response.json();
+    if (!json.success) return setModelListStatus(json.message || '获取模型列表失败，仍可手动输入模型。');
+    const models = Array.isArray(json.data) ? json.data.filter((item) => item?.id) : [];
+    if (!models.length) return setModelListStatus('未返回可用模型，仍可手动输入模型。');
+    modelSelect.innerHTML = ['<option value="">选择返回的模型</option>', ...models.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.id)}</option>`)].join('');
+    modelOptions.innerHTML = models.map((item) => `<option value="${escapeHtml(item.id)}"></option>`).join('');
+    modelSelect.hidden = false;
+    setModelListStatus(`已获取 ${models.length} 个模型，选择后会填入模型输入框。`);
+  } catch (error) {
+    setModelListStatus(`获取模型列表失败：${error.message}。仍可手动输入模型。`);
+  }
+}
+
+function setModelListStatus(message) {
+  document.querySelector('#model-list-status').textContent = message;
 }
 
 document.querySelector('#team-select').addEventListener('change', (event) => {
@@ -547,7 +598,6 @@ function formatTestMode(mode) {
 function formatEndpointPreset(preset) {
   return ({
     'openai-chat': 'OpenAI ChatCompletions',
-    'models-list': '模型列表',
     'openai-responses': 'OpenAI Responses',
     'claude-messages': 'Claude Messages',
     'gemini-generate-content': 'Gemini generateContent',
