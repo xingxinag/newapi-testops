@@ -1,6 +1,6 @@
 const apiBase = window.__NEWAPI_TESTOPS_API__ || 'http://127.0.0.1:8788';
 
-const state = { jobs: [], schedules: [], trends: [], user: null, authRequired: false, teams: [], selectedTeamId: '' };
+const state = { jobs: [], schedules: [], trends: [], user: null, authRequired: false, teams: [], selectedTeamId: '', apiStatus: { state: 'connecting', error: '', service: '' } };
 
 document.querySelector('#app').innerHTML = `
   <main class="shell">
@@ -14,6 +14,10 @@ document.querySelector('#app').innerHTML = `
     </section>
     <section class="grid">
       <aside class="sidebar-stack">
+        <section class="card api-status-card" aria-live="polite">
+          <h2>后端连接</h2>
+          <div id="api-status"></div>
+        </section>
         <section class="card account-card">
           <h2>账号与团队</h2>
           <p class="muted form-intro">使用真实后端账号会话；未开启强制登录时，也可以保持开放模式直接运行测试。</p>
@@ -111,6 +115,35 @@ document.querySelector('#model-select').addEventListener('change', (event) => {
   const model = event.currentTarget.value;
   if (model) document.querySelector('#model-input').value = model;
 });
+
+renderApiStatus();
+
+async function checkApiHealth() {
+  state.apiStatus = { state: 'connecting', error: '', service: '' };
+  renderApiStatus();
+  try {
+    const response = await fetch(`${apiBase}/api/health`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const json = await response.json();
+    state.apiStatus = { state: 'connected', error: '', service: json.service || '' };
+  } catch (error) {
+    state.apiStatus = { state: 'disconnected', error: error.message, service: '' };
+  }
+  renderApiStatus();
+}
+
+function renderApiStatus() {
+  const labels = { connecting: '正在连接', connected: '已连接', disconnected: '已断开' };
+  const stateClass = { connecting: 'connecting', connected: 'connected', disconnected: 'disconnected' };
+  const status = state.apiStatus;
+  document.querySelector('#api-status').innerHTML = `<div class="api-status ${stateClass[status.state] || 'connecting'}">
+    <span>${escapeHtml(labels[status.state] || status.state)}</span>
+    <strong>${escapeHtml(apiBase)}</strong>
+    <p class="muted">后端只提供 API 服务；当前页面是独立 Web 控制台，用于确认前端是否已连到该 API。</p>
+    ${status.service ? `<p class="muted">服务：${escapeHtml(status.service)}</p>` : ''}
+    ${status.error ? `<p class="error">错误：${escapeHtml(status.error)}</p>` : ''}
+  </div>`;
+}
 
 function getJobPayload(formElement) {
   const form = new FormData(formElement);
@@ -381,11 +414,12 @@ function renderJobs() {
 
 function renderJob(job) {
   const checks = (job.checks || []).map((item) => `<li class="${escapeHtml(item.status)}"><span>${escapeHtml(item.name)}</span><strong>${escapeHtml(item.detail)}</strong></li>`).join('');
-  const artifacts = ['request.json', 'response.json', 'report.json'].map((name) => `<a href="${artifactUrl(job.runId, name)}" target="_blank" rel="noopener">${name}</a>`).join('');
+  const artifacts = renderArtifactLinks(job.runId);
   const exports = ['csv', 'html', 'zip'].map((format) => `<a href="${exportUrl(job.runId, format)}" target="_blank" rel="noopener">${format.toUpperCase()} 报告</a>`).join('');
   return `<article class="job">
     <header><strong>${escapeHtml(job.runId)}</strong><span>${escapeHtml(job.status)}</span><b>${escapeHtml(job.score)}%</b></header>
     <p>${escapeHtml(formatRunSummary(job.input, `${job.summary?.totalRequests || 0} 次请求`))}</p>
+    ${renderJobMeta(job)}
     <section class="link-group">
       <h3>测试证据</h3>
       <nav class="artifacts" aria-label="${escapeHtml(job.runId)} 的测试证据">${artifacts}</nav>
@@ -394,9 +428,94 @@ function renderJob(job) {
       <h3>报告导出</h3>
       <nav class="artifacts" aria-label="${escapeHtml(job.runId)} 的报告导出">${exports}</nav>
     </section>
+    ${renderFailureEvidence(job)}
     ${renderBenchmarkReport(job)}
     <ul>${checks}</ul>
   </article>`;
+}
+
+function renderJobMeta(job) {
+  const target = resolveJobTarget(job);
+  return `<div class="meta-grid">
+    ${reportMetric('创建时间', formatTimestamp(job.createdAt))}
+    ${reportMetric('开始时间', formatTimestamp(job.startedAt))}
+    ${reportMetric('完成时间', formatTimestamp(job.completedAt))}
+    ${reportMetric('请求方法', target.method)}
+    ${reportMetric('测试端点', target.endpoint)}
+    ${reportMetric('最终 URL', target.url)}
+  </div>`;
+}
+
+function resolveJobTarget(job) {
+  const input = job.input || {};
+  const endpoint = input.endpoint || endpointForInput(input);
+  const method = job.request?.method || input.method || input.endpointMethod || 'POST';
+  return {
+    method,
+    endpoint,
+    url: job.request?.url || buildFinalUrl(input.baseUrl, endpoint, input.model),
+  };
+}
+
+function endpointForInput(input) {
+  if (input.endpointPreset === 'openai-responses') return '/v1/responses';
+  if (input.endpointPreset === 'claude-messages') return '/v1/messages';
+  if (input.endpointPreset === 'gemini-generate-content' || input.mode === 'aspect-ratio') return '/v1beta/models/{model}:generateContent';
+  if (input.endpointPreset === 'openai-image-generation' || input.mode === 'image') return '/v1/images/generations';
+  return '/v1/chat/completions';
+}
+
+function buildFinalUrl(baseUrl, endpoint, model) {
+  if (!baseUrl || !endpoint) return undefined;
+  const normalizedBase = String(baseUrl).replace(/\/$/, '');
+  return `${normalizedBase}${String(endpoint).replace('{model}', encodeURIComponent(model || ''))}`;
+}
+
+function renderFailureEvidence(job) {
+  if (job.status !== 'failed') return '';
+  const summaryErrors = job.summary?.errors && typeof job.summary.errors === 'object' ? Object.entries(job.summary.errors).filter(([, value]) => isPresentMetric(value)) : [];
+  const errorMetrics = summaryErrors.length ? summaryErrors.map(([name, value]) => reportMetric(name, value)).join('') : reportMetric('错误摘要', 'summary.errors 暂无记录');
+  return `<details class="benchmark-report failure-evidence">
+    <summary>失败证据与排查指引</summary>
+    <div class="report-groups">
+      <section class="report-group">
+        <h4>请求预览</h4>
+        <pre>${escapeHtml(previewJson(job.request?.body))}</pre>
+        <p class="muted">完整请求请打开 request.json；敏感请求头由后端脱敏保存。</p>
+      </section>
+      <section class="report-group">
+        <h4>响应预览</h4>
+        <div class="report-grid">${reportMetric('HTTP 状态', job.response?.statusCode)}</div>
+        <pre>${escapeHtml(previewJson(job.response?.body))}</pre>
+        <p class="muted">完整响应请打开 response.json；如预览显示 artifact，请下载证据文件确认。</p>
+      </section>
+      <section class="report-group">
+        <h4>错误汇总</h4>
+        <div class="report-grid">${errorMetrics}</div>
+      </section>
+      <section class="report-group">
+        <h4>证据文件</h4>
+        <nav class="artifacts" aria-label="${escapeHtml(job.runId)} 的失败证据">${renderArtifactLinks(job.runId)}</nav>
+      </section>
+    </div>
+  </details>`;
+}
+
+function renderArtifactLinks(runId) {
+  return ['request.json', 'response.json', 'report.json'].map((name) => `<a href="${artifactUrl(runId, name)}" target="_blank" rel="noopener">${name}</a>`).join('');
+}
+
+function previewJson(value) {
+  if (!isPresentMetric(value)) return '暂无预览';
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  return text.length > 360 ? `${text.slice(0, 360)}...` : text;
+}
+
+function formatTimestamp(value) {
+  if (!value) return '暂无';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', { hour12: false });
 }
 
 function renderBenchmarkReport(job) {
@@ -579,11 +698,19 @@ function formatMetric(value, suffix) {
 }
 
 function renderSchedule(schedule) {
+  const latestHistory = Array.isArray(schedule.history) ? schedule.history[0] : null;
   return `<article class="job">
     <header><strong>${escapeHtml(schedule.name)}</strong><span>每 ${escapeHtml(schedule.intervalSeconds)} 秒</span><b>${escapeHtml(schedule.history?.length || 0)} 次运行</b></header>
     <p>${escapeHtml(formatRunSummary(schedule.input))}</p>
+    <div class="meta-grid">
+      ${reportMetric('创建时间', formatTimestamp(schedule.createdAt))}
+      ${reportMetric('上次运行', formatTimestamp(schedule.lastRunAt))}
+      ${reportMetric('下次运行', formatTimestamp(schedule.nextRunAt))}
+      ${reportMetric('最近 Run ID', schedule.lastRunId || '暂无')}
+      ${reportMetric('历史开始', formatTimestamp(latestHistory?.startedAt))}
+      ${reportMetric('历史完成', formatTimestamp(latestHistory?.completedAt))}
+    </div>
     <p class="muted">后台 worker 会按此间隔自动执行；请确保 <code>npm run start:worker</code> 正在运行。</p>
-    <p class="muted">最近运行：${escapeHtml(schedule.lastRunId || '暂无')}</p>
   </article>`;
 }
 
@@ -626,6 +753,8 @@ function exportUrl(runId, format) {
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 }
+
+checkApiHealth();
 
 loadCurrentUser().then(refreshProtectedData).catch((error) => {
   document.querySelector('#jobs').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
