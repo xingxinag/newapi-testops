@@ -22,5 +22,17 @@ services:
     depends_on:
       - api
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["npm", "run", "start:worker"]
+    environment:
+      DATA_DIR: /data
+      ARTIFACT_LOCAL_DIR: /data/artifacts
+      SCHEDULER_POLL_INTERVAL_MS: 30000
+    volumes:
+      - newapi-testops-data:/data
+
 volumes:
   newapi-testops-data:

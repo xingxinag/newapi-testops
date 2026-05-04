@@ -134,6 +134,7 @@ WEB_HOST=127.0.0.1
 WEB_PORT=4178
 PUBLIC_API_BASE_URL=http://127.0.0.1:8788
 DATA_DIR=./data
+AUTH_REQUIRED=false
 ARTIFACT_STORAGE_DRIVER=local
 ARTIFACT_LOCAL_DIR=./data/artifacts
 S3_ENDPOINT=
@@ -147,9 +148,25 @@ S3_SECRET_ACCESS_KEY=
 
 - 任务历史：`data/jobs.json`
 - 调度历史：`data/schedules.json`
+- 可选登录/团队数据：`data/users.json`、`data/sessions.json`、`data/teams.json`、`data/memberships.json`
 - artifact：`data/artifacts/<runId>/request.json` 等
 
+默认 `AUTH_REQUIRED=false`，本地 API 保持开放。设置 `AUTH_REQUIRED=true` 后，`jobs`、`schedules`、`artifacts`、`exports`、`analytics` 需要先通过 `/api/auth/register` 或 `/api/auth/login` 获取 HttpOnly `SameSite=Lax` 会话 Cookie；可用 `/api/auth/me` 查看当前用户，`/api/auth/logout` 注销。团队共享使用 `POST /api/teams` 创建团队，再用 `POST /api/teams/<teamId>/members` 按邮箱添加已注册用户。
+
 `S3_*` 变量是为后续 R2/S3 适配预留的，当前版本不会真正上传到对象存储。
+
+如果要启用 Cloudflare R2 / S3-compatible artifact 存储，把 `ARTIFACT_STORAGE_DRIVER` 改成 `s3`，并填写：
+
+```env
+ARTIFACT_STORAGE_DRIVER=s3
+S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+S3_REGION=auto
+S3_BUCKET=your-bucket
+S3_ACCESS_KEY_ID=your-access-key-id
+S3_SECRET_ACCESS_KEY=your-secret-access-key
+```
+
+启用后，任务元数据仍保存在本地 `DATA_DIR`，但 `request.json`、`response.json`、`report.json` 会写入 S3/R2，并继续通过 `GET /api/jobs/:runId/artifacts/:name` 读取。
 
 ## API 使用示例
 
