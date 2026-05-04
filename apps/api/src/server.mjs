@@ -87,7 +87,7 @@ export function createApiServer(options = {}) {
         const runId = createRunId(new Date(createdAt));
         const owner = await ownerFields(body, current, auth, authRequired);
         const completed = await createAndRunJob({ ...scheduleInput.input, runId, createdAt, ...owner }, store);
-        const schedule = { scheduleId, name: scheduleInput.name, intervalSeconds: scheduleInput.intervalSeconds, createdAt, input: completed.input, lastRunId: runId, lastRunAt: completed.completedAt, nextRunAt: new Date(new Date(createdAt).getTime() + scheduleInput.intervalSeconds * 1000).toISOString(), history: [{ runId, status: completed.status, completedAt: completed.completedAt }], ...owner };
+        const schedule = { scheduleId, name: scheduleInput.name, intervalSeconds: scheduleInput.intervalSeconds, createdAt, input: completed.input, lastRunId: runId, lastRunAt: completed.completedAt, nextRunAt: new Date(new Date(createdAt).getTime() + scheduleInput.intervalSeconds * 1000).toISOString(), history: [{ runId, status: completed.status, startedAt: completed.startedAt, completedAt: completed.completedAt }], ...owner };
         await store.writeSchedules([schedule, ...await store.readSchedules()]);
         return json(req, res, 201, { success: true, data: schedule });
       }

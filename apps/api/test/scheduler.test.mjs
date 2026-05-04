@@ -19,6 +19,8 @@ test('runDueSchedules runs one due schedule and advances nextRunAt', async () =>
   assert.equal(updated.lastRunId, jobs[0].runId);
   assert.equal(updated.runningRunId, undefined);
   assert.equal(updated.history.length, 1);
+  assert.match(updated.history[0].startedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(updated.history[0].completedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(updated.nextRunAt, '2026-05-04T04:01:01.000Z');
 });
 

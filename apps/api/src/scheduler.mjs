@@ -42,7 +42,7 @@ async function completeScheduleRun(store, scheduleId, completed, now) {
   const schedules = await store.readSchedules();
   const schedule = schedules.find((item) => item.scheduleId === scheduleId);
   if (!schedule) return;
-  const history = [{ runId: completed.runId, status: completed.status, completedAt: completed.completedAt }, ...(schedule.history || [])].slice(0, MAX_HISTORY);
+  const history = [{ runId: completed.runId, status: completed.status, startedAt: completed.startedAt || schedule.lastStartedAt, completedAt: completed.completedAt }, ...(schedule.history || [])].slice(0, MAX_HISTORY);
   const nextRunAt = new Date(now.getTime() + schedule.intervalSeconds * 1000).toISOString();
   const updated = { ...schedule, lastRunId: completed.runId, lastRunAt: completed.completedAt, nextRunAt, history };
   delete updated.runningRunId;
