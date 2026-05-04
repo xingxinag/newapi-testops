@@ -1,10 +1,14 @@
 export async function exportJobCsv(runId, store) {
   const job = await findJob(runId, store);
   const summary = job.summary || {};
+  const target = await readTarget(runId, store);
   const row = [
     job.runId,
     job.status,
     job.score,
+    target.method,
+    target.endpoint,
+    target.finalUrl,
     summary.totalRequests ?? 0,
     summary.successCount ?? 0,
     summary.failureCount ?? 0,
@@ -19,12 +23,13 @@ export async function exportJobCsv(runId, store) {
     summary.latencyMs?.p99 ?? 0,
     summary.tokens?.total ?? 0,
   ];
-  return `${['runId', 'status', 'score', 'totalRequests', 'successCount', 'failureCount', 'rateLimitedCount', 'timeoutCount', 'successRpm', 'overallRps', 'latencyAvg', 'latencyP50', 'latencyP90', 'latencyP95', 'latencyP99', 'tokensTotal'].join(',')}\n${row.map(csvCell).join(',')}\n`;
+  return `${['runId', 'status', 'score', 'method', 'endpoint', 'finalUrl', 'totalRequests', 'successCount', 'failureCount', 'rateLimitedCount', 'timeoutCount', 'successRpm', 'overallRps', 'latencyAvg', 'latencyP50', 'latencyP90', 'latencyP95', 'latencyP99', 'tokensTotal'].join(',')}\n${row.map(csvCell).join(',')}\n`;
 }
 
 export async function exportJobHtml(runId, store) {
   const job = await findJob(runId, store);
   const report = await store.readArtifact(runId, 'report.json');
+  const target = report.target || {};
   return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>NewAPI TestOps Report ${escapeHtml(job.runId)}</title></head>
@@ -33,12 +38,23 @@ export async function exportJobHtml(runId, store) {
   <p><strong>Run:</strong> ${escapeHtml(job.runId)}</p>
   <p><strong>Status:</strong> ${escapeHtml(job.status)}</p>
   <p><strong>Model:</strong> ${escapeHtml(job.input?.model)}</p>
+  <p><strong>Method:</strong> ${escapeHtml(target.method)}</p>
+  <p><strong>Endpoint:</strong> ${escapeHtml(target.endpoint)}</p>
+  <p><strong>Final URL:</strong> ${escapeHtml(target.finalUrl)}</p>
   <p><strong>Score:</strong> ${escapeHtml(job.score)}%</p>
   ${renderHtmlReportSections(job.summary || {})}
   <h2>Checks</h2>
   <pre>${escapeHtml(JSON.stringify(report.checks || [], null, 2))}</pre>
 </body>
 </html>`;
+}
+
+async function readTarget(runId, store) {
+  try {
+    return (await store.readArtifact(runId, 'report.json')).target || {};
+  } catch {
+    return {};
+  }
 }
 
 function renderHtmlReportSections(summary) {

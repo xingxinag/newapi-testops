@@ -13,8 +13,8 @@ test('GET /api/jobs/:runId/export.csv returns a redacted summary CSV', async () 
 
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type'), /text\/csv/);
-    assert.match(csv, /runId,status,score,totalRequests,successCount,failureCount,rateLimitedCount,timeoutCount,successRpm,overallRps,latencyAvg,latencyP50,latencyP90,latencyP95,latencyP99,tokensTotal/);
-    assert.match(csv, new RegExp(`${fixture.runId},completed,100,1,1,0`));
+    assert.match(csv, /runId,status,score,method,endpoint,finalUrl,totalRequests,successCount,failureCount,rateLimitedCount,timeoutCount,successRpm,overallRps,latencyAvg,latencyP50,latencyP90,latencyP95,latencyP99,tokensTotal/);
+    assert.match(csv, new RegExp(`${fixture.runId},completed,100,POST,/v1/chat/completions,https://api.example.com/v1/chat/completions,1,1,0`));
     assert.doesNotMatch(csv, /export-secret/);
   } finally {
     await fixture.close();
@@ -31,6 +31,9 @@ test('GET /api/jobs/:runId/export.html returns a standalone escaped report', asy
     assert.match(response.headers.get('content-type'), /text\/html/);
     assert.match(html, /<!doctype html>/i);
     assert.match(html, /&lt;html-model&gt;/);
+    assert.match(html, /<strong>Method:<\/strong> POST/);
+    assert.match(html, /<strong>Endpoint:<\/strong> \/v1\/chat\/completions/);
+    assert.match(html, /<strong>Final URL:<\/strong> https:\/\/api\.example\.com\/v1\/chat\/completions/);
     assert.match(html, /吞吐量 KPI/);
     assert.match(html, /延迟分析/);
     assert.doesNotMatch(html, /export-secret/);
