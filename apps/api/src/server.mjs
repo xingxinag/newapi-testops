@@ -24,6 +24,7 @@ export function createApiServer(options = {}) {
       if (req.method === 'OPTIONS') return cors(req, res);
       if (req.method === 'GET' && url.pathname === '/api/health') return json(req, res, 200, { success: true, service: 'newapi-testops-api' });
       const current = await currentAuth(req, auth);
+      if (req.method === 'POST' && url.pathname === '/api/models') return await listModels(req, res, current, authRequired);
       if (req.method === 'POST' && url.pathname === '/api/auth/register') return await register(req, res, auth, cookieOptions);
       if (req.method === 'POST' && url.pathname === '/api/auth/login') return await login(req, res, auth, cookieOptions);
       if (req.method === 'POST' && url.pathname === '/api/auth/logout') return await logout(req, res, auth, cookieOptions);
@@ -137,6 +138,21 @@ async function currentAuth(req, auth) {
   return auth.readSession(parseSessionId(req.headers.cookie || ''));
 }
 
+async function listModels(req, res, current, authRequired) {
+  requireAuthIfNeeded(authRequired, current);
+  const body = await readJson(req);
+  const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim().replace(/\/$/, '') : '';
+  if (!baseUrl) throw statusError(400, 'baseUrl is required');
+  const endpoint = body.endpoint === undefined ? '/v1/models' : body.endpoint;
+  if (endpoint !== '/v1/models' && endpoint !== '/v1beta/models') throw statusError(400, 'endpoint must be one of /v1/models, /v1beta/models');
+  const response = await fetch(`${baseUrl}${endpoint}`, {
+    method: 'GET',
+    headers: body.apiKey ? { authorization: `Bearer ${body.apiKey}` } : {},
+  });
+  const payload = await response.json();
+  return json(req, res, 200, { success: true, data: normalizeModelList(payload, endpoint) });
+}
+
 function requireUser(current) {
   if (!current) throw statusError(401, 'Authentication required');
   return current.user;
@@ -226,6 +242,14 @@ async function readJson(req) {
   for await (const chunk of req) chunks.push(chunk);
   const text = Buffer.concat(chunks).toString('utf8');
   return text ? JSON.parse(text) : {};
+}
+
+function normalizeModelList(payload, endpoint) {
+  const items = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.models) ? payload.models : [];
+  return items.map((item) => {
+    const rawId = endpoint === '/v1beta/models' ? (item?.name || item?.id || '') : (item?.id || item?.name || '');
+    return { id: String(rawId).replace(/^models\//, ''), source: endpoint };
+  }).filter((item) => item.id);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

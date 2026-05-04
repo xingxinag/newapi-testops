@@ -233,7 +233,6 @@ function extractUsage(body) {
 }
 
 function buildRequestBody(input) {
-  if (input.endpointPreset === 'models-list') return undefined;
   if (input.endpointPreset === 'openai-responses') return { model: input.model, input: 'Say OK for NewAPI TestOps probe.' };
   if (input.endpointPreset === 'claude-messages') return { model: input.model, messages: [{ role: 'user', content: 'Say OK for NewAPI TestOps probe.' }], max_tokens: 64 };
   if (input.endpointPreset === 'gemini-generate-content') return { contents: [{ role: 'user', parts: [{ text: 'Say OK for NewAPI TestOps probe.' }] }] };
