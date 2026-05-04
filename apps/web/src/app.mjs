@@ -141,6 +141,7 @@ async function loadCurrentUser() {
     const json = await response.json();
     state.user = json.data?.user || json.user || null;
     state.authRequired = false;
+    if (state.user) await loadTeams();
     renderAccountPanels();
   } catch (error) {
     state.user = null;
@@ -157,6 +158,7 @@ async function submitAuth(action, formElement) {
   if (!json.success) return setAuthStatus(json.message || '操作失败');
   state.user = json.data || null;
   state.authRequired = false;
+  await loadTeams();
   renderAccountPanels();
   await refreshProtectedData();
 }
@@ -171,6 +173,23 @@ async function logout() {
   state.selectedTeamId = '';
   renderAccountPanels('已退出登录，可继续使用开放模式或重新登录。');
   await refreshProtectedData();
+}
+
+async function loadTeams() {
+  if (!state.user) {
+    state.teams = [];
+    state.selectedTeamId = '';
+    return;
+  }
+  const response = await fetch(`${apiBase}/api/teams`, { credentials: 'include' });
+  if (response.status === 401) {
+    state.teams = [];
+    state.selectedTeamId = '';
+    return;
+  }
+  const json = await response.json();
+  state.teams = json.data || [];
+  if (!state.teams.some((team) => team.id === state.selectedTeamId)) state.selectedTeamId = '';
 }
 
 async function createTeam(formElement) {
@@ -191,6 +210,8 @@ async function addTeamMember(formElement) {
   const response = await fetch(`${apiBase}/api/teams/${encodeURIComponent(state.selectedTeamId)}/members`, { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include', body: JSON.stringify({ email: form.get('memberEmail') }) });
   const json = await response.json();
   setTeamStatus(json.success ? `已添加成员 ${json.data.email}` : json.message || '添加成员失败');
+  if (json.success) await loadTeams();
+  renderAccountPanels();
 }
 
 function renderAccountPanels(message = '') {

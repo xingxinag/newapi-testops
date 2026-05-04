@@ -135,6 +135,9 @@ WEB_PORT=4178
 PUBLIC_API_BASE_URL=http://127.0.0.1:8788
 DATA_DIR=./data
 AUTH_REQUIRED=false
+SESSION_COOKIE_SAMESITE=Lax
+SESSION_COOKIE_SECURE=false
+SESSION_COOKIE_DOMAIN=
 ARTIFACT_STORAGE_DRIVER=local
 ARTIFACT_LOCAL_DIR=./data/artifacts
 S3_ENDPOINT=
@@ -151,7 +154,7 @@ S3_SECRET_ACCESS_KEY=
 - 可选登录/团队数据：`data/users.json`、`data/sessions.json`、`data/teams.json`、`data/memberships.json`
 - artifact：`data/artifacts/<runId>/request.json` 等
 
-默认 `AUTH_REQUIRED=false`，本地 API 保持开放。设置 `AUTH_REQUIRED=true` 后，`jobs`、`schedules`、`artifacts`、`exports`、`analytics` 需要先通过 `/api/auth/register` 或 `/api/auth/login` 获取 HttpOnly `SameSite=Lax` 会话 Cookie；可用 `/api/auth/me` 查看当前用户，`/api/auth/logout` 注销。团队共享使用 `POST /api/teams` 创建团队，再用 `POST /api/teams/<teamId>/members` 按邮箱添加已注册用户。
+默认 `AUTH_REQUIRED=false`，本地 API 保持开放。设置 `AUTH_REQUIRED=true` 后，`jobs`、`schedules`、`artifacts`、`exports`、`analytics` 需要先通过 `/api/auth/register` 或 `/api/auth/login` 获取 HttpOnly 会话 Cookie；可用 `/api/auth/me` 查看当前用户，`/api/auth/logout` 注销。团队共享使用 `GET /api/teams` 查看当前用户团队，`POST /api/teams` 创建团队，再用 `POST /api/teams/<teamId>/members` 按邮箱添加已注册用户。`r`n`r`n如果静态前端和 API 是不同站点，例如 Vercel/Cloudflare Pages/GitHub Pages 前端访问独立 API 域名，浏览器要求跨站 Cookie 使用 `SameSite=None; Secure`。这时 API 环境变量应设置：`r`n`r`n```env`r`nAUTH_REQUIRED=true`r`nSESSION_COOKIE_SAMESITE=None`r`nSESSION_COOKIE_SECURE=true`r`nSESSION_COOKIE_DOMAIN=`r`n```
 
 `S3_*` 变量是为后续 R2/S3 适配预留的，当前版本不会真正上传到对象存储。
 
@@ -552,4 +555,5 @@ docker compose down
 - 增加更丰富的趋势图、成功率图、延迟分位图。
 - 增加登录、权限、团队共享。
 - 增加导出 ZIP/CSV/HTML 报告。
+
 
