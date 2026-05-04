@@ -117,6 +117,109 @@ test('POST /api/jobs records rich live benchmark metrics from real samples', asy
   }
 });
 
+test('POST /api/jobs builds preset-specific synthetic request records', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const cases = [
+    {
+      endpointPreset: 'models-list',
+      mode: 'text',
+      endpointMethod: 'GET',
+      endpoint: '/v1/models',
+      body: undefined,
+      headers: { Authorization: '[redacted]' },
+    },
+    {
+      endpointPreset: 'openai-chat',
+      mode: 'text',
+      endpointMethod: 'POST',
+      endpoint: '/v1/chat/completions',
+      body: { model: 'demo-model', messages: [{ role: 'user', content: 'Say OK for NewAPI TestOps probe.' }], max_tokens: 64 },
+      headers: { Authorization: '[redacted]', 'Content-Type': 'application/json' },
+    },
+    {
+      endpointPreset: 'openai-responses',
+      mode: 'text',
+      endpointMethod: 'POST',
+      endpoint: '/v1/responses',
+      body: { model: 'demo-model', input: 'Say OK for NewAPI TestOps probe.' },
+      headers: { Authorization: '[redacted]', 'Content-Type': 'application/json' },
+    },
+    {
+      endpointPreset: 'claude-messages',
+      mode: 'text',
+      endpointMethod: 'POST',
+      endpoint: '/v1/messages',
+      body: { model: 'demo-model', messages: [{ role: 'user', content: 'Say OK for NewAPI TestOps probe.' }], max_tokens: 64 },
+      headers: { Authorization: '[redacted]', 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
+    },
+    {
+      endpointPreset: 'gemini-generate-content',
+      mode: 'aspect-ratio',
+      endpointMethod: 'POST',
+      endpoint: '/v1beta/models/demo-model:generateContent',
+      body: { contents: [{ role: 'user', parts: [{ text: 'Say OK for NewAPI TestOps probe.' }] }] },
+      headers: { Authorization: '[redacted]', 'Content-Type': 'application/json' },
+    },
+    {
+      endpointPreset: 'openai-image-generation',
+      mode: 'image',
+      endpointMethod: 'POST',
+      endpoint: '/v1/images/generations',
+      body: { model: 'demo-model', prompt: 'A compact status dashboard card', n: 1, size: '1024x1024' },
+      headers: { Authorization: '[redacted]', 'Content-Type': 'application/json' },
+    },
+  ];
+
+  try {
+    for (const testCase of cases) {
+      const response = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseUrl: 'https://api.example.com', apiKey: 'secret-key', model: 'demo-model', mode: testCase.mode, endpointPreset: testCase.endpointPreset, concurrency: 1, durationSeconds: 1 }),
+      });
+      assert.equal(response.status, 201);
+      const created = await response.json();
+      const artifactResponse = await fetch(`http://127.0.0.1:${port}/api/jobs/${created.data.runId}/artifacts/request.json`);
+      const artifact = await artifactResponse.json();
+      assert.equal(artifact.url, testCase.endpointPreset === 'gemini-generate-content' ? 'https://api.example.com/v1beta/models/demo-model:generateContent' : `https://api.example.com${testCase.endpoint}`);
+      assert.equal(artifact.method, undefined);
+      assert.deepEqual(artifact.headers, testCase.headers);
+      assert.deepEqual(artifact.body, testCase.body);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('POST /api/jobs uses preset methods and bodies for live requests', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const upstream = await startJsonUpstream({ supportsGet: true });
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: upstream.baseUrl, apiKey: 'live-secret', model: 'live-model', mode: 'text', endpointPreset: 'models-list', executionMode: 'live', concurrency: 1, durationSeconds: 1, retainFullBodies: true }),
+    });
+    assert.equal(response.status, 201);
+    await response.json();
+    assert.equal(upstream.requests.length, 1);
+    assert.equal(upstream.requests[0].method, 'GET');
+    assert.equal(upstream.requests[0].path, '/v1/models');
+    assert.equal(upstream.requests[0].headers.authorization, 'Bearer live-secret');
+    assert.equal(upstream.requests[0].headers['content-type'], undefined);
+    assert.equal(upstream.requests[0].body, '');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await upstream.close();
+  }
+});
+
 test('GET /api/jobs/:runId/artifacts/:name returns stored artifact JSON', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
   const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
@@ -204,12 +307,14 @@ async function startJsonUpstream(options = {}) {
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    requests.push({ headers: req.headers, body });
+    const bodyText = Buffer.concat(chunks).toString('utf8');
+    const body = bodyText ? JSON.parse(bodyText) : null;
+    requests.push({ method: req.method, path: req.url, headers: req.headers, body: bodyText, json: body });
     const status = options.statuses ? options.statuses[count % options.statuses.length] : 200;
     count += 1;
+    const model = body && typeof body === 'object' ? body.model : null;
     res.writeHead(status, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: status >= 200 && status < 300, model: body.model, received: true, usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }));
+    res.end(JSON.stringify({ ok: status >= 200 && status < 300, model, received: true, usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();

@@ -7,7 +7,7 @@ export async function runSyntheticJob(input, store, now = new Date()) {
 
   const startedAt = now.toISOString();
   const requestBody = buildRequestBody(input);
-  const requestHeaders = redactHeaders({ Authorization: input.apiKey ? `Bearer ${input.apiKey}` : '', 'Content-Type': 'application/json' });
+  const requestHeaders = redactHeaders(buildRequestHeaders(input, requestBody));
   const latencyMs = Math.max(50, Math.min(30000, input.concurrency * 37 + input.durationSeconds * 21));
   const responseBody = buildResponseBody(input, latencyMs);
   const statusCode = 200;
@@ -24,7 +24,7 @@ export async function runSyntheticJob(input, store, now = new Date()) {
     queueLatencyMs: Math.round(input.concurrency * 3),
     tokens: { input: 128, output: input.mode === 'text' ? 64 : 0, total: input.mode === 'text' ? 192 : 128 },
   };
-  const requestRecord = { url: `${input.baseUrl}${input.endpoint}`, headers: requestHeaders, body: requestBody };
+  const requestRecord = { url: buildRequestUrl(input), headers: requestHeaders, body: requestBody };
   const responseRecord = { statusCode, headers: { 'content-type': 'application/json' }, body: responseBody };
   const artifacts = [
     await store.putArtifact(input.runId, 'request.json', requestRecord),
@@ -50,11 +50,11 @@ export async function runSyntheticJob(input, store, now = new Date()) {
 async function runLiveJob(input, store, now = new Date()) {
   const startedAt = now.toISOString();
   const requestBody = buildRequestBody(input);
-  const rawHeaders = { Authorization: input.apiKey ? `Bearer ${input.apiKey}` : '', 'Content-Type': 'application/json' };
+  const rawHeaders = buildRequestHeaders(input, requestBody);
   const requestHeaders = redactHeaders(rawHeaders);
-  const url = `${input.baseUrl}${input.endpoint.replace('{model}', encodeURIComponent(input.model))}`;
+  const url = buildRequestUrl(input);
   const totalRequests = input.concurrency * input.durationSeconds;
-  const results = await runLiveRequests(totalRequests, input.concurrency, url, rawHeaders, requestBody);
+  const results = await runLiveRequests(totalRequests, input.concurrency, url, input.endpointMethod || 'POST', rawHeaders, requestBody);
   const firstResult = results[0];
   const statusCode = firstResult.statusCode;
   const parsedBody = firstResult.body;
@@ -114,7 +114,7 @@ async function runLiveJob(input, store, now = new Date()) {
   };
 }
 
-async function runLiveRequests(totalRequests, concurrency, url, headers, body) {
+async function runLiveRequests(totalRequests, concurrency, url, method, headers, body) {
   const results = [];
   let nextIndex = 0;
   let activeRequests = 0;
@@ -126,7 +126,7 @@ async function runLiveRequests(totalRequests, concurrency, url, headers, body) {
       activeRequests += 1;
       const currentActiveRequests = activeRequests;
       try {
-        results.push(await runOneLiveRequest(url, headers, body, { queuedAt, activeRequests: currentActiveRequests }));
+        results.push(await runOneLiveRequest(url, method, headers, body, { queuedAt, activeRequests: currentActiveRequests }));
       } finally {
         activeRequests -= 1;
       }
@@ -136,15 +136,15 @@ async function runLiveRequests(totalRequests, concurrency, url, headers, body) {
   return results;
 }
 
-async function runOneLiveRequest(url, headers, body, sampleContext = {}) {
+async function runOneLiveRequest(url, method, headers, body, sampleContext = {}) {
   const startedAt = performance.now();
   const queueLatencyMs = sampleContext.queuedAt ? Math.max(0, startedAt - sampleContext.queuedAt) : 0;
   const start = performance.now();
   try {
     const response = await fetch(url, {
-      method: 'POST',
+      method,
       headers,
-      body: JSON.stringify(body),
+      ...(body ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(30000),
     });
     const ttfbMs = Math.round(performance.now() - start);
@@ -233,9 +233,33 @@ function extractUsage(body) {
 }
 
 function buildRequestBody(input) {
-  if (input.mode === 'text') return { model: input.model, messages: [{ role: 'user', content: 'Say OK for NewAPI TestOps probe.' }], max_tokens: 64 };
+  if (input.endpointPreset === 'models-list') return undefined;
+  if (input.endpointPreset === 'openai-responses') return { model: input.model, input: 'Say OK for NewAPI TestOps probe.' };
+  if (input.endpointPreset === 'claude-messages') return { model: input.model, messages: [{ role: 'user', content: 'Say OK for NewAPI TestOps probe.' }], max_tokens: 64 };
+  if (input.endpointPreset === 'gemini-generate-content') return { contents: [{ role: 'user', parts: [{ text: 'Say OK for NewAPI TestOps probe.' }] }] };
+  if (input.endpointPreset === 'openai-image-generation') return { model: input.model, prompt: 'A compact status dashboard card', n: 1, size: '1024x1024' };
+  if (input.mode === 'text' || input.endpointPreset === 'openai-chat') return { model: input.model, messages: [{ role: 'user', content: 'Say OK for NewAPI TestOps probe.' }], max_tokens: 64 };
   if (input.mode === 'image') return { model: input.model, prompt: 'A compact status dashboard card', n: 1, size: '1024x1024' };
   return { contents: [{ role: 'user', parts: [{ text: 'Generate a simple diagnostic image.' }] }], generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio: '16:9' } } };
+}
+
+function buildRequestHeaders(input, body) {
+  const headers = {};
+  if (input.apiKey) headers.Authorization = `Bearer ${input.apiKey}`;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (input.endpointPreset === 'claude-messages') headers['anthropic-version'] = '2023-06-01';
+  return headers;
+}
+
+function buildRequestUrl(input) {
+  return `${input.baseUrl}${resolveEndpoint(input).replace('{model}', encodeURIComponent(input.model))}`;
+}
+
+function resolveEndpoint(input) {
+  if (input.endpoint) return input.endpoint;
+  if (input.mode === 'image') return '/v1/images/generations';
+  if (input.mode === 'aspect-ratio') return '/v1beta/models/{model}:generateContent';
+  return '/v1/chat/completions';
 }
 
 function buildResponseBody(input, latencyMs) {
