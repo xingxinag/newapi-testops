@@ -1,7 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRunId, createScheduleId, validateJobInput, validateNotificationConfig, validateScheduleInput, validateStorageConfig } from '../../../packages/contracts/src/contracts.mjs';
+import { createRunId, createScheduleId, validateJobInput, validateNotificationConfig, validateQuestionBankInput, validateScheduleInput, validateStorageConfig } from '../../../packages/contracts/src/contracts.mjs';
 import { getTrendPoints } from './analytics.mjs';
 import { createArtifactStore } from './artifacts.mjs';
 import { clearSessionCookie, createAuthStore, parseSessionId, publicUser, sessionCookie } from './auth.mjs';
@@ -57,6 +57,42 @@ export function createApiServer(options = {}) {
       if (req.method === 'GET' && url.pathname === '/api/schedules') {
         requireAuthIfNeeded(authRequired, current);
         return json(req, res, 200, { success: true, data: await visibleSchedules(store, auth, current, authRequired) });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/question-banks') {
+        requireAuthIfNeeded(authRequired, current);
+        return json(req, res, 200, { success: true, data: await store.readQuestionBanks() });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/question-banks') {
+        requireAuthIfNeeded(authRequired, current);
+        const bank = createQuestionBank(validateQuestionBankInput(await readJson(req)));
+        await store.writeQuestionBanks([bank, ...await store.readQuestionBanks()]);
+        return json(req, res, 201, { success: true, data: bank });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/question-banks/import') {
+        requireAuthIfNeeded(authRequired, current);
+        const body = await readJson(req);
+        const imported = (Array.isArray(body.banks) ? body.banks : []).map((bank) => createQuestionBank(validateQuestionBankInput(bank)));
+        if (!imported.length) throw statusError(400, 'banks must include at least one question bank');
+        await store.writeQuestionBanks([...imported, ...await store.readQuestionBanks()]);
+        return json(req, res, 201, { success: true, data: imported });
+      }
+      const questionBankMatch = url.pathname.match(/^\/api\/question-banks\/([^/]+)$/);
+      if (req.method === 'PUT' && questionBankMatch) {
+        requireAuthIfNeeded(authRequired, current);
+        const bankId = decodeURIComponent(questionBankMatch[1]);
+        const existing = await store.readQuestionBanks();
+        const index = existing.findIndex((bank) => bank.id === bankId);
+        if (index === -1) throw statusError(404, 'Question bank not found');
+        const updated = { ...existing[index], ...validateQuestionBankInput(await readJson(req)), updatedAt: new Date().toISOString() };
+        await store.writeQuestionBanks(existing.map((bank) => bank.id === bankId ? updated : bank));
+        return json(req, res, 200, { success: true, data: updated });
+      }
+      if (req.method === 'DELETE' && questionBankMatch) {
+        requireAuthIfNeeded(authRequired, current);
+        const bankId = decodeURIComponent(questionBankMatch[1]);
+        const existing = await store.readQuestionBanks();
+        await store.writeQuestionBanks(existing.filter((bank) => bank.id !== bankId));
+        return json(req, res, 200, { success: true });
       }
       if (req.method === 'GET' && url.pathname === '/api/config/storage') {
         requireAuthIfNeeded(authRequired, current);
@@ -225,6 +261,17 @@ function scheduleTimingFields(scheduleInput, createdAt) {
   return { intervalSeconds: scheduleInput.intervalSeconds, nextRunAt: new Date(new Date(createdAt).getTime() + scheduleInput.intervalSeconds * 1000).toISOString() };
 }
 
+function createQuestionBank(input) {
+  const now = new Date().toISOString();
+  return { id: createQuestionBankId(new Date(now)), ...input, createdAt: now, updatedAt: now };
+}
+
+function createQuestionBankId(date = new Date()) {
+  const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const random = Math.random().toString(36).slice(2, 8);
+  return `qb_${stamp}_${random}`;
+}
+
 function nextSimpleCronRunAt(cron, now) {
   const minutes = Number(String(cron).match(/^\*\/(\d+) \* \* \* \*$/)?.[1]);
   const next = new Date(now);
@@ -270,7 +317,7 @@ function corsHeaders(req, extra = {}) {
   return {
     'access-control-allow-origin': origin || '*',
     ...(origin ? { 'access-control-allow-credentials': 'true' } : {}),
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'access-control-allow-headers': 'content-type, authorization, cookie',
     ...extra,
   };

@@ -151,6 +151,110 @@ test('POST /api/jobs stores displayName from custom and parameter history naming
   }
 });
 
+test('POST /api/jobs uses exact default and sorted-parameter history names', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const defaultResponse = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://api.example.com', model: 'demo-model', mode: 'text', concurrency: 1, durationSeconds: 1 }),
+    });
+    assert.equal(defaultResponse.status, 201);
+    const created = await defaultResponse.json();
+    assert.match(created.data.displayName, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} 文本 测试demo-model$/);
+
+    const parameterResponse = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://api.example.com', model: 'demo-model', mode: 'image', endpointPreset: 'openai-image-generation', concurrency: 3, durationSeconds: 2, executionMode: 'live', historyNameMode: 'parameters', historyNameFields: ['model', 'mode', 'concurrency'] }),
+    });
+    assert.equal(parameterResponse.status, 201);
+    const parameter = await parameterResponse.json();
+    assert.equal(parameter.data.displayName, '并发数=3 / 模型=demo-model / 测试模式=图像');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('question bank API supports create, update, import, and delete lifecycle', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const createResponse = await fetch(`http://127.0.0.1:${port}/api/question-banks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Concurrent QA bank', items: [{ type: 'text', prompt: 'Say OK' }, { type: 'image-generation', prompt: 'Generate a cat poster', imageUrl: 'https://example.com/cat.png' }] }),
+    });
+    assert.equal(createResponse.status, 201);
+    const created = await createResponse.json();
+    assert.equal(created.data.name, 'Concurrent QA bank');
+    assert.equal(created.data.items[1].type, 'image-generation');
+
+    const updateResponse = await fetch(`http://127.0.0.1:${port}/api/question-banks/${created.data.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Updated bank', items: [{ type: 'text', prompt: 'Updated prompt' }] }),
+    });
+    assert.equal(updateResponse.status, 200);
+    const updated = await updateResponse.json();
+    assert.equal(updated.data.name, 'Updated bank');
+    assert.equal(updated.data.items[0].prompt, 'Updated prompt');
+
+    const importResponse = await fetch(`http://127.0.0.1:${port}/api/question-banks/import`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ banks: [{ name: 'Imported bank', items: [{ type: 'image-generation', prompt: 'Generate product photo' }] }] }),
+    });
+    assert.equal(importResponse.status, 201);
+    const imported = await importResponse.json();
+    assert.equal(imported.data.length, 1);
+    assert.equal(imported.data[0].name, 'Imported bank');
+
+    const list = await (await fetch(`http://127.0.0.1:${port}/api/question-banks`)).json();
+    assert.deepEqual(list.data.map((bank) => bank.name), ['Imported bank', 'Updated bank']);
+
+    const deleteResponse = await fetch(`http://127.0.0.1:${port}/api/question-banks/${created.data.id}`, { method: 'DELETE' });
+    assert.equal(deleteResponse.status, 200);
+    const afterDelete = await (await fetch(`http://127.0.0.1:${port}/api/question-banks`)).json();
+    assert.deepEqual(afterDelete.data.map((bank) => bank.name), ['Imported bank']);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('POST /api/jobs uses selected question bank prompts in request artifacts', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const textResponse = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://api.example.com', model: 'demo-model', mode: 'text', concurrency: 1, durationSeconds: 1, questionBank: [{ type: 'text', prompt: 'Explain NewAPI in one sentence.' }] }),
+    });
+    const textJob = await textResponse.json();
+    const textArtifact = await (await fetch(`http://127.0.0.1:${port}/api/jobs/${textJob.data.runId}/artifacts/request.json`)).json();
+    assert.equal(textArtifact.body.messages[0].content, 'Explain NewAPI in one sentence.');
+
+    const imageResponse = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://api.example.com', model: 'demo-model', mode: 'image', endpointPreset: 'openai-image-generation', concurrency: 1, durationSeconds: 1, questionBank: [{ type: 'image-generation', prompt: 'Generate a clean product photo.' }] }),
+    });
+    const imageJob = await imageResponse.json();
+    const imageArtifact = await (await fetch(`http://127.0.0.1:${port}/api/jobs/${imageJob.data.runId}/artifacts/request.json`)).json();
+    assert.equal(imageArtifact.body.prompt, 'Generate a clean product photo.');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('POST /api/jobs records failed live probe error samples and target report details', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
   const upstreamMessage = 'upstream exploded while processing chat completion';

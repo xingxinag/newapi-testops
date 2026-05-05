@@ -10,6 +10,7 @@ export function createArtifactStore({ dataDir = './data', artifactDir = './data/
     artifacts,
     jobsFile: path.join(root, 'jobs.json'),
     schedulesFile: path.join(root, 'schedules.json'),
+    questionBanksFile: path.join(root, 'question-banks.json'),
     storageConfigFile: path.join(root, 'storage-config.json'),
     notificationConfigFile: path.join(root, 'notification-config.json'),
     async ensure() {
@@ -24,6 +25,11 @@ export function createArtifactStore({ dataDir = './data', artifactDir = './data/
         await readFile(this.schedulesFile, 'utf8');
       } catch {
         await writeFile(this.schedulesFile, '[]\n');
+      }
+      try {
+        await readFile(this.questionBanksFile, 'utf8');
+      } catch {
+        await writeFile(this.questionBanksFile, '[]\n');
       }
     },
     async readJobs() {
@@ -41,6 +47,14 @@ export function createArtifactStore({ dataDir = './data', artifactDir = './data/
     async writeSchedules(schedules) {
       await this.ensure();
       await writeFile(this.schedulesFile, `${JSON.stringify(schedules, null, 2)}\n`);
+    },
+    async readQuestionBanks() {
+      await this.ensure();
+      return JSON.parse(await readFile(this.questionBanksFile, 'utf8'));
+    },
+    async writeQuestionBanks(questionBanks) {
+      await this.ensure();
+      await writeFile(this.questionBanksFile, `${JSON.stringify(questionBanks, null, 2)}\n`);
     },
     async readStorageConfig() {
       await this.ensure();

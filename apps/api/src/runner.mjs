@@ -252,13 +252,20 @@ function extractUsage(body) {
 }
 
 function buildRequestBody(input) {
-  if (input.endpointPreset === 'openai-responses') return { model: input.model, input: 'Say OK for NewAPI TestOps probe.' };
-  if (input.endpointPreset === 'claude-messages') return { model: input.model, messages: [{ role: 'user', content: 'Say OK for NewAPI TestOps probe.' }], max_tokens: 64 };
-  if (input.endpointPreset === 'gemini-generate-content') return { contents: [{ role: 'user', parts: [{ text: 'Say OK for NewAPI TestOps probe.' }] }] };
-  if (input.endpointPreset === 'openai-image-generation') return { model: input.model, prompt: 'A compact status dashboard card', n: 1, size: '1024x1024' };
-  if (input.mode === 'text' || input.endpointPreset === 'openai-chat') return { model: input.model, messages: [{ role: 'user', content: 'Say OK for NewAPI TestOps probe.' }], max_tokens: 64 };
-  if (input.mode === 'image') return { model: input.model, prompt: 'A compact status dashboard card', n: 1, size: '1024x1024' };
-  return { contents: [{ role: 'user', parts: [{ text: 'Generate a simple diagnostic image.' }] }], generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio: '16:9' } } };
+  const textPrompt = questionPrompt(input, ['text']) || 'Say OK for NewAPI TestOps probe.';
+  const imagePrompt = questionPrompt(input, ['image-generation', 'image']) || 'A compact status dashboard card';
+  if (input.endpointPreset === 'openai-responses') return { model: input.model, input: textPrompt };
+  if (input.endpointPreset === 'claude-messages') return { model: input.model, messages: [{ role: 'user', content: textPrompt }], max_tokens: 64 };
+  if (input.endpointPreset === 'gemini-generate-content') return { contents: [{ role: 'user', parts: [{ text: textPrompt }] }] };
+  if (input.endpointPreset === 'openai-image-generation') return { model: input.model, prompt: imagePrompt, n: 1, size: '1024x1024' };
+  if (input.mode === 'text' || input.endpointPreset === 'openai-chat') return { model: input.model, messages: [{ role: 'user', content: textPrompt }], max_tokens: 64 };
+  if (input.mode === 'image') return { model: input.model, prompt: imagePrompt, n: 1, size: '1024x1024' };
+  return { contents: [{ role: 'user', parts: [{ text: questionPrompt(input, ['image-generation', 'text']) || 'Generate a simple diagnostic image.' }] }], generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio: '16:9' } } };
+}
+
+function questionPrompt(input, types) {
+  const entry = (input.questionBank || []).find((item) => types.includes(item.type) && item.prompt);
+  return entry?.prompt;
 }
 
 function buildRequestHeaders(input, body) {

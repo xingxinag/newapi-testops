@@ -16,10 +16,37 @@ export async function createAndRunJob(input, store) {
 
 function buildDisplayName(input) {
   if (input.historyNameMode === 'custom') return input.historyName.trim();
-  if (input.historyNameMode === 'parameters') return `${input.mode} ${input.model} c${input.concurrency} d${input.durationSeconds}s ${input.endpointPreset}`;
+  if (input.historyNameMode === 'parameters') return buildParameterDisplayName(input);
   const date = new Date(input.createdAt);
   const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  return `${stamp} 测试模式 测试${input.model}`;
+  return `${stamp} ${formatMode(input.mode)} 测试${input.model}`;
+}
+
+function buildParameterDisplayName(input) {
+  if (!input.historyNameFields?.length) return `${input.mode} ${input.model} c${input.concurrency} d${input.durationSeconds}s ${input.endpointPreset}`;
+  return input.historyNameFields.slice().sort((a, b) => fieldOrder.indexOf(a) - fieldOrder.indexOf(b)).map((field) => `${fieldLabels[field]}=${formatParameterValue(field, input[field])}`).join(' / ');
+}
+
+const fieldOrder = ['concurrency', 'model', 'mode', 'durationSeconds', 'endpointPreset', 'executionMode', 'baseUrl'];
+
+const fieldLabels = {
+  baseUrl: 'API地址',
+  concurrency: '并发数',
+  durationSeconds: '持续秒数',
+  endpointPreset: '端点预设',
+  executionMode: '执行方式',
+  mode: '测试模式',
+  model: '模型',
+};
+
+function formatParameterValue(field, value) {
+  if (field === 'mode') return formatMode(value);
+  if (field === 'executionMode') return ({ synthetic: '模拟探测', live: '真实请求' })[value] || value;
+  return String(value ?? '');
+}
+
+function formatMode(mode) {
+  return ({ text: '文本', image: '图像', 'aspect-ratio': '宽高比' })[mode] || mode;
 }
 
 function pad(value) {
