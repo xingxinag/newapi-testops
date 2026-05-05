@@ -2,6 +2,8 @@ export const TEST_MODES = ['text', 'image', 'aspect-ratio'];
 export const EXECUTION_MODES = ['synthetic', 'live'];
 export const JOB_STATUSES = ['queued', 'running', 'completed', 'failed'];
 export const CHECK_STATUSES = ['pass', 'warning', 'fail'];
+export const HISTORY_NAME_MODES = ['default', 'custom', 'parameters'];
+export const ACCESS_SCOPES = ['public', 'private', 'password', 'account', 'team'];
 export const ENDPOINT_PRESETS = [
   'openai-chat',
   'openai-responses',
@@ -66,6 +68,13 @@ export function validateJobInput(input) {
   if (!TEST_MODES.includes(body.mode)) errors.push(`mode must be one of ${TEST_MODES.join(', ')}`);
   const endpointPreset = normalizeEndpointPreset(body.mode, body.endpointPreset);
   if (body.endpointPreset && !ENDPOINT_TARGETS[body.endpointPreset]) errors.push(`endpointPreset must be one of ${ENDPOINT_PRESETS.join(', ')}`);
+  const historyNameMode = body.historyNameMode || 'default';
+  if (!HISTORY_NAME_MODES.includes(historyNameMode)) errors.push(`historyNameMode must be one of ${HISTORY_NAME_MODES.join(', ')}`);
+  const historyName = typeof body.historyName === 'string' ? body.historyName.trim() : '';
+  if (historyNameMode === 'custom' && !historyName) errors.push('historyName is required when historyNameMode is custom');
+  const accessScope = body.accessScope || 'private';
+  if (!ACCESS_SCOPES.includes(accessScope)) errors.push(`accessScope must be one of ${ACCESS_SCOPES.join(', ')}`);
+  const questionBank = normalizeQuestionBank(body.questionBank, errors);
   const executionMode = body.executionMode || 'synthetic';
   if (!EXECUTION_MODES.includes(executionMode)) errors.push(`executionMode must be one of ${EXECUTION_MODES.join(', ')}`);
   const concurrency = Number(body.concurrency ?? 1);
@@ -88,6 +97,13 @@ export function validateJobInput(input) {
     endpoint: body.endpoint || ENDPOINT_TARGETS[endpointPreset].endpoint,
     concurrency,
     durationSeconds,
+    historyNameMode,
+    historyName,
+    accessScope,
+    accessPassword: body.accessPassword ? String(body.accessPassword) : '',
+    accountId: body.accountId ? String(body.accountId).trim() : '',
+    teamId: body.teamId ? String(body.teamId).trim() : '',
+    questionBank,
     sampling: normalizeSampling(body.sampling),
     retainFullBodies: Boolean(body.retainFullBodies),
   };
@@ -97,8 +113,11 @@ export function validateScheduleInput(input) {
   const errors = [];
   const body = input && typeof input === 'object' ? input : {};
   if (!body.name || typeof body.name !== 'string') errors.push('name is required');
-  const intervalSeconds = Number(body.intervalSeconds ?? 3600);
-  if (!Number.isInteger(intervalSeconds) || intervalSeconds < 60) errors.push('intervalSeconds must be an integer greater than or equal to 60');
+  const hasCron = body.cron !== undefined && body.cron !== '';
+  const intervalSeconds = hasCron ? undefined : Number(body.intervalSeconds ?? 3600);
+  const cron = hasCron ? String(body.cron).trim() : undefined;
+  if (hasCron && !isSimpleEveryMinutesCron(cron)) errors.push('cron must use simple */N * * * * format');
+  if (!hasCron && (!Number.isInteger(intervalSeconds) || intervalSeconds < 60)) errors.push('intervalSeconds must be an integer greater than or equal to 60');
   if (errors.length) {
     const error = new Error(errors.join('; '));
     error.statusCode = 400;
@@ -106,8 +125,52 @@ export function validateScheduleInput(input) {
   }
   return {
     name: body.name.trim(),
-    intervalSeconds,
+    ...(hasCron ? { cron } : { intervalSeconds }),
     input: { ...validateJobInput(body.input || {}), sampling: { strategy: 'scheduled', sampleRate: 1 } },
+  };
+}
+
+export function validateStorageConfig(input) {
+  const errors = [];
+  const body = input && typeof input === 'object' ? input : {};
+  const provider = body.provider || 'local';
+  if (!['local', 's3', 'r2'].includes(provider)) errors.push('provider must be one of local, s3, r2');
+  const retentionDays = Number(body.retentionDays ?? 30);
+  if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) errors.push('retentionDays must be an integer between 1 and 3650');
+  if ((provider === 's3' || provider === 'r2') && !body.bucket) errors.push('bucket is required');
+  if ((provider === 's3' || provider === 'r2') && !body.endpoint) errors.push('endpoint is required');
+  if (errors.length) throwValidation(errors);
+  return {
+    provider,
+    bucket: String(body.bucket || '').trim(),
+    endpoint: String(body.endpoint || '').trim(),
+    region: String(body.region || 'auto').trim(),
+    accessKeyId: String(body.accessKeyId || '').trim(),
+    secretAccessKey: String(body.secretAccessKey || ''),
+    retentionDays,
+  };
+}
+
+validateStorageConfig.mask = function maskStorageConfig(config = {}) {
+  return { ...config, secretAccessKey: config.secretAccessKey ? maskSecret(config.secretAccessKey) : '' };
+};
+
+export function validateNotificationConfig(input) {
+  const errors = [];
+  const body = input && typeof input === 'object' ? input : {};
+  const channel = body.channel || 'none';
+  if (!['none', 'webhook', 'email'].includes(channel)) errors.push('channel must be one of none, webhook, email');
+  if (channel === 'webhook' && !body.webhookUrl) errors.push('webhookUrl is required');
+  if (errors.length) throwValidation(errors);
+  const template = body.template && typeof body.template === 'object' ? body.template : {};
+  return {
+    enabled: Boolean(body.enabled),
+    channel,
+    webhookUrl: String(body.webhookUrl || '').trim(),
+    template: {
+      title: String(template.title || '').trim(),
+      body: String(template.body || '').trim(),
+    },
   };
 }
 
@@ -121,6 +184,37 @@ function normalizeSampling(sampling) {
   const strategy = ['manual', 'scheduled', 'random-sample'].includes(sampling.strategy) ? sampling.strategy : 'manual';
   const sampleRate = Number(sampling.sampleRate ?? 1);
   return { strategy, sampleRate: Number.isFinite(sampleRate) && sampleRate > 0 ? sampleRate : 1 };
+}
+
+function normalizeQuestionBank(questionBank, errors) {
+  if (questionBank === undefined) return [];
+  if (!Array.isArray(questionBank)) {
+    errors.push('questionBank must be an array');
+    return [];
+  }
+  return questionBank.map((entry, index) => {
+    const type = entry?.type;
+    const prompt = typeof entry?.prompt === 'string' ? entry.prompt.trim() : '';
+    if (type !== 'text' && type !== 'image') errors.push(`questionBank[${index}].type must be text or image`);
+    if (!prompt) errors.push(`questionBank[${index}].prompt is required`);
+    if (type === 'image') {
+      const imageUrl = typeof entry?.imageUrl === 'string' ? entry.imageUrl.trim() : '';
+      if (!imageUrl) errors.push(`questionBank[${index}].imageUrl is required`);
+      return { type, prompt, imageUrl };
+    }
+    return { type, prompt };
+  });
+}
+
+function isSimpleEveryMinutesCron(cron) {
+  const match = String(cron || '').match(/^\*\/(\d+) \* \* \* \*$/);
+  return Boolean(match && Number(match[1]) >= 1 && Number(match[1]) <= 59);
+}
+
+function throwValidation(errors) {
+  const error = new Error(errors.join('; '));
+  error.statusCode = 400;
+  throw error;
 }
 
 export function buildChecklist({ statusCode, bodyText, latencyMs, model }) {
