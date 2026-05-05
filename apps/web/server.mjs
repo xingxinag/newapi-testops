@@ -8,6 +8,17 @@ const port = Number(process.env.WEB_PORT || 4178);
 
 http.createServer((req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  if (url.pathname === '/config.js') {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+    const apiBase = process.env.NEWAPI_TESTOPS_API || 'http://127.0.0.1:8788';
+    res.end(`window.__NEWAPI_TESTOPS_API__ = ${JSON.stringify(apiBase)};\n`);
+    return;
+  }
+  if (url.pathname === '/favicon.ico') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   const pathname = url.pathname === '/' ? '/index.html' : url.pathname;
   const filePath = path.join(root, pathname.replace(/^\/+/, ''));
   if (!filePath.startsWith(root) || !existsSync(filePath)) {
