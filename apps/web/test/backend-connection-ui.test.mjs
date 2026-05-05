@@ -23,9 +23,15 @@ test('new TestOps controls expose required DOM markers', async () => {
     'history-access-scope',
     'immediate-feedback',
     'question-bank',
+    'question-bank-manager',
+    'question-bank-upload',
+    'question-bank-list',
+    'question-bank-select',
     'question-bank-image-prompt',
     'history-name-mode',
     'history-custom-name',
+    'history-name-preview',
+    'history-name-fields',
     'storage-config',
     'storage-secret-masked',
     'schedule-cron',
@@ -42,9 +48,21 @@ test('job and schedule payloads include TestOps MVP fields', async () => {
   assert.match(app, /payload\.accessPassword = accessPassword/);
   assert.match(app, /payload\.historyNameMode = form\.get\('historyNameMode'\)/);
   assert.match(app, /payload\.historyName = historyName/);
-  assert.match(app, /payload\.questionBank = buildQuestionBank\(form\)/);
+  assert.match(app, /payload\.questionBank = selectedQuestionBankItems\(\)/);
+  assert.match(app, /payload\.historyNameFields = selectedHistoryNameFields\(form\)/);
   assert.match(app, /if \(cron\) payload\.cron = cron/);
   assert.match(app, /intervalSeconds: Number\(form\.get\('intervalSeconds'\)\)/);
+});
+
+test('question bank manager supports load save import edit delete and job selection', async () => {
+  const app = await readFile('apps/web/src/app.mjs', 'utf8');
+
+  assert.match(app, /fetch\(`\$\{getApiBase\(\)\}\/api\/question-banks`, protectedFetchOptions\(\)\)/);
+  assert.match(app, /fetch\(`\$\{getApiBase\(\)\}\/api\/question-banks`, \{ method: 'POST'/);
+  assert.match(app, /fetch\(`\$\{getApiBase\(\)\}\/api\/question-banks\/\$\{encodeURIComponent\(state\.editingQuestionBankId\)\}`, \{ method: 'PUT'/);
+  assert.match(app, /fetch\(`\$\{getApiBase\(\)\}\/api\/question-banks\/import`, \{ method: 'POST'/);
+  assert.match(app, /fetch\(`\$\{getApiBase\(\)\}\/api\/question-banks\/\$\{encodeURIComponent\(bankId\)\}`, \{ method: 'DELETE'/);
+  assert.match(app, /function selectedQuestionBankItems\(\)/);
 });
 
 test('immediate run gives pending feedback and disables button before fetch completes', async () => {

@@ -1,6 +1,6 @@
 const defaultApiBase = window.__NEWAPI_TESTOPS_API__ || 'http://127.0.0.1:8788';
 
-const state = { jobs: [], schedules: [], trends: [], user: null, authRequired: false, teams: [], selectedTeamId: '', apiBase: normalizeApiBase(defaultApiBase), apiStatus: { state: 'connecting', error: '', service: '' } };
+const state = { jobs: [], schedules: [], trends: [], questionBanks: [], editingQuestionBankId: '', user: null, authRequired: false, teams: [], selectedTeamId: '', apiBase: normalizeApiBase(defaultApiBase), apiStatus: { state: 'connecting', error: '', service: '' } };
 
 document.querySelector('#app').innerHTML = `
   <main class="shell">
@@ -59,12 +59,20 @@ document.querySelector('#app').innerHTML = `
             <label>访问密码<input name="accessPassword" type="password" placeholder="可选，公开/团队历史的查看密码" autocomplete="off" /></label>
             <label data-testid="history-name-mode">历史命名<select name="historyNameMode"><option value="default">后端默认</option><option value="parameters">按参数自动命名</option><option value="custom">自定义名称</option></select></label>
             <label data-testid="history-custom-name">自定义历史名称<input name="historyName" placeholder="例如：夜间冒烟测试" /></label>
+            <div data-testid="history-name-fields" class="history-name-fields">
+              <label class="inline"><input name="historyNameFields" type="checkbox" value="concurrency" checked /> 并发数</label>
+              <label class="inline"><input name="historyNameFields" type="checkbox" value="model" checked /> 模型</label>
+              <label class="inline"><input name="historyNameFields" type="checkbox" value="mode" checked /> 测试模式</label>
+              <label class="inline"><input name="historyNameFields" type="checkbox" value="durationSeconds" /> 持续秒数</label>
+              <label class="inline"><input name="historyNameFields" type="checkbox" value="endpointPreset" /> 端点预设</label>
+            </div>
+            <p data-testid="history-name-preview" id="history-name-preview" class="muted">默认：提交后由后端生成 YYYY-MM-DD HH:mm:ss 测试模式 测试models。</p>
           </fieldset>
           <fieldset data-testid="question-bank">
             <legend>题库 Prompt</legend>
-            <label>文本题<input name="questionTextPrompt" placeholder="例如：用一句话介绍 NewAPI" /></label>
-            <label data-testid="question-bank-image-prompt">图片题 Prompt<input name="questionImagePrompt" placeholder="例如：描述图片中的主要对象" /></label>
-            <label>图片 URL<input name="questionImageUrl" placeholder="https://example.com/sample.png" /></label>
+            <label data-testid="question-bank-select">选择题库<select name="questionBankId" id="question-bank-select"><option value="">不使用题库</option></select></label>
+            <label class="inline"><input name="includeAllQuestionBanks" type="checkbox" /> 合并全部题库 Prompt</label>
+            <label data-testid="question-bank-image-prompt">临时图片生成 Prompt<input name="questionImagePrompt" placeholder="例如：生成一张猫咪海报" /></label>
           </fieldset>
           <div class="action-panel immediate-panel">
             <h3>立即测试</h3>
@@ -82,6 +90,22 @@ document.querySelector('#app').innerHTML = `
           </fieldset>
           <p id="form-status" class="muted"></p>
         </form>
+        <section class="card question-bank-card" data-testid="question-bank-manager">
+          <h2>问题库管理</h2>
+          <p class="muted form-intro">保存可复用的并发测试 Prompt；可手动编辑，也可导入 JSON。</p>
+          <form id="question-bank-form" class="config-form">
+            <label>题库名称<input name="bankName" placeholder="并发测试题库" /></label>
+            <label>题库项目 JSON<textarea name="bankItems" rows="6" placeholder='[{"type":"text","prompt":"Say OK"},{"type":"image-generation","prompt":"Generate a cat poster"}]'></textarea></label>
+            <div class="button-row">
+              <button type="submit">保存题库</button>
+              <button type="button" id="question-bank-reset" class="secondary">新建</button>
+            </div>
+          </form>
+          <label data-testid="question-bank-upload">上传/导入 JSON<textarea id="question-bank-upload" placeholder='{"banks":[{"name":"Imported","items":[{"type":"image-generation","prompt":"Generate product photo"}]}]}'></textarea></label>
+          <button type="button" id="question-bank-import-button" class="secondary">导入题库</button>
+          <div data-testid="question-bank-list" id="question-bank-list" class="question-bank-list"></div>
+          <p id="question-bank-status" class="muted"></p>
+        </section>
         <section class="card" data-testid="storage-config">
           <h2>存储配置</h2>
           <p class="muted form-intro">配置报告与证据的保留策略；密钥保存后只显示后端返回的脱敏值。</p>
@@ -186,12 +210,29 @@ document.querySelector('#notification-config-form').addEventListener('submit', a
   await saveNotificationConfig(event.currentTarget);
 });
 
+document.querySelector('#question-bank-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await saveQuestionBank(event.currentTarget);
+});
+
+document.querySelector('#question-bank-import-button').addEventListener('click', importQuestionBankFile);
+document.querySelector('#question-bank-reset').addEventListener('click', resetQuestionBankForm);
+document.querySelector('#question-bank-list').addEventListener('click', async (event) => {
+  const bankId = event.target?.dataset?.bankId;
+  if (!bankId) return;
+  if (event.target.dataset.action === 'edit') return editQuestionBank(bankId);
+  if (event.target.dataset.action === 'delete') return deleteQuestionBank(bankId);
+});
+
+document.querySelector('#job-form').addEventListener('input', () => updateHistoryNamePreview(document.querySelector('#job-form')));
+
 document.querySelector('#model-select').addEventListener('change', (event) => {
   const model = event.currentTarget.value;
   if (model) document.querySelector('#model-input').value = model;
 });
 
 renderApiStatus();
+updateHistoryNamePreview(document.querySelector('#job-form'));
 
 async function testApiConnection() {
   const input = document.querySelector('#api-base-input');
@@ -206,7 +247,84 @@ async function testApiConnection() {
 }
 
 async function loadConfigForms() {
-  await Promise.all([loadStorageConfig(), loadNotificationConfig()]);
+  await Promise.all([loadStorageConfig(), loadNotificationConfig(), loadQuestionBanks()]);
+}
+
+async function loadQuestionBanks() {
+  setQuestionBankStatus('正在读取问题库...');
+  const response = await fetch(`${getApiBase()}/api/question-banks`, protectedFetchOptions());
+  if (response.status === 401) return setQuestionBankStatus('登录后可读取问题库。');
+  const json = await response.json();
+  if (!json.success) return setQuestionBankStatus(json.message || '读取问题库失败');
+  state.questionBanks = Array.isArray(json.data) ? json.data : [];
+  renderQuestionBanks();
+  setQuestionBankStatus(state.questionBanks.length ? `已读取 ${state.questionBanks.length} 个问题库。` : '暂无问题库，可新建或导入。');
+}
+
+async function saveQuestionBank(formElement) {
+  const form = new FormData(formElement);
+  const payload = { name: form.get('bankName'), items: parseBankItems(form.get('bankItems')) };
+  setQuestionBankStatus('正在保存问题库...');
+  const response = state.editingQuestionBankId
+    ? await fetch(`${getApiBase()}/api/question-banks/${encodeURIComponent(state.editingQuestionBankId)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) })
+    : await fetch(`${getApiBase()}/api/question-banks`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
+  const json = await response.json();
+  if (!json.success) return setQuestionBankStatus(json.message || '保存问题库失败');
+  resetQuestionBankForm();
+  await loadQuestionBanks();
+}
+
+async function importQuestionBankFile() {
+  const text = document.querySelector('#question-bank-upload').value.trim();
+  if (!text) return setQuestionBankStatus('请先粘贴要导入的 JSON。');
+  const payload = JSON.parse(text);
+  const response = await fetch(`${getApiBase()}/api/question-banks/import`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload.banks ? payload : { banks: [payload] }) });
+  const json = await response.json();
+  if (!json.success) return setQuestionBankStatus(json.message || '导入问题库失败');
+  document.querySelector('#question-bank-upload').value = '';
+  await loadQuestionBanks();
+}
+
+function editQuestionBank(bankId) {
+  const bank = state.questionBanks.find((item) => item.id === bankId);
+  if (!bank) return;
+  state.editingQuestionBankId = bank.id;
+  const form = document.querySelector('#question-bank-form');
+  form.elements.bankName.value = bank.name || '';
+  form.elements.bankItems.value = JSON.stringify(bank.items || [], null, 2);
+  setQuestionBankStatus(`正在编辑：${bank.name}`);
+}
+
+async function deleteQuestionBank(bankId) {
+  const response = await fetch(`${getApiBase()}/api/question-banks/${encodeURIComponent(bankId)}`, { method: 'DELETE', ...protectedFetchOptions() });
+  const json = await response.json();
+  if (!json.success) return setQuestionBankStatus(json.message || '删除问题库失败');
+  if (state.editingQuestionBankId === bankId) resetQuestionBankForm();
+  await loadQuestionBanks();
+}
+
+function renderQuestionBanks() {
+  const select = document.querySelector('#question-bank-select');
+  select.innerHTML = ['<option value="">不使用题库</option>', ...state.questionBanks.map((bank) => `<option value="${escapeHtml(bank.id)}">${escapeHtml(bank.name)} (${escapeHtml(bank.items?.length || 0)} 条)</option>`)].join('');
+  document.querySelector('#question-bank-list').innerHTML = state.questionBanks.length ? state.questionBanks.map((bank) => `<article class="question-bank-item">
+    <strong>${escapeHtml(bank.name)}</strong>
+    <p class="muted">${escapeHtml(bank.items?.length || 0)} 条 Prompt，更新于 ${escapeHtml(formatTimestamp(bank.updatedAt))}</p>
+    <div class="button-row"><button type="button" class="secondary" data-action="edit" data-bank-id="${escapeHtml(bank.id)}">编辑</button><button type="button" data-action="delete" data-bank-id="${escapeHtml(bank.id)}">删除</button></div>
+  </article>`).join('') : '<p class="muted">暂无问题库。</p>';
+}
+
+function resetQuestionBankForm() {
+  state.editingQuestionBankId = '';
+  document.querySelector('#question-bank-form').reset();
+}
+
+function parseBankItems(value) {
+  const parsed = JSON.parse(String(value || '[]'));
+  return Array.isArray(parsed) ? parsed : parsed.items;
+}
+
+function setQuestionBankStatus(message) {
+  document.querySelector('#question-bank-status').textContent = message;
 }
 
 async function loadStorageConfig() {
@@ -350,18 +468,42 @@ function getJobPayload(formElement) {
   const historyName = String(form.get('historyName') || '').trim();
   if (payload.historyNameMode === 'custom') payload.historyName = historyName;
   else delete payload.historyName;
-  payload.questionBank = buildQuestionBank(form);
+  payload.historyNameFields = selectedHistoryNameFields(form);
+  payload.questionBank = selectedQuestionBankItems();
+  const imagePrompt = String(form.get('questionImagePrompt') || '').trim();
+  if (imagePrompt) payload.questionBank.push({ type: 'image-generation', prompt: imagePrompt });
   return payload;
 }
 
-function buildQuestionBank(form) {
-  const textPrompt = String(form.get('questionTextPrompt') || '').trim();
-  const imagePrompt = String(form.get('questionImagePrompt') || '').trim();
-  const imageUrl = String(form.get('questionImageUrl') || '').trim();
-  return [
-    textPrompt ? { type: 'text', prompt: textPrompt } : null,
-    imagePrompt && imageUrl ? { type: 'image', prompt: imagePrompt, imageUrl } : null,
-  ].filter(Boolean);
+function selectedQuestionBankItems() {
+  const form = new FormData(document.querySelector('#job-form'));
+  const selectedId = String(form.get('questionBankId') || '');
+  const banks = form.has('includeAllQuestionBanks') ? state.questionBanks : state.questionBanks.filter((bank) => bank.id === selectedId);
+  return banks.flatMap((bank) => bank.items || []);
+}
+
+function selectedHistoryNameFields(form) {
+  return form.getAll('historyNameFields').map(String);
+}
+
+function updateHistoryNamePreview(formElement) {
+  const form = new FormData(formElement);
+  const mode = String(form.get('historyNameMode') || 'default');
+  const model = String(form.get('model') || 'demo-model');
+  const modeLabel = formatTestMode(form.get('mode'));
+  let preview = `默认：YYYY-MM-DD HH:mm:ss ${modeLabel} 测试${model}`;
+  if (mode === 'custom') preview = `自定义：${String(form.get('historyName') || '').trim() || '请输入自定义历史名称'}`;
+  if (mode === 'parameters') preview = selectedHistoryNameFields(form).map((field) => `${historyFieldLabels[field]}=${formatHistoryFieldValue(field, form)}`).join(' / ');
+  document.querySelector('#history-name-preview').textContent = preview;
+}
+
+const historyFieldLabels = { concurrency: '并发数', model: '模型', mode: '测试模式', durationSeconds: '持续秒数', endpointPreset: '端点预设', executionMode: '执行方式', baseUrl: 'API地址' };
+
+function formatHistoryFieldValue(field, form) {
+  const value = form.get(field);
+  if (field === 'mode') return formatTestMode(value);
+  if (field === 'executionMode') return formatExecutionMode(value);
+  return value;
 }
 
 async function fetchModelList() {

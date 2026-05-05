@@ -32,6 +32,13 @@ button.secondary { margin-top: 10px; background: #2563eb; }
 .model-helper-row .compact-button { width: auto; min-width: 112px; margin: 0; padding: 0 12px; }
 .model-list-helper { display: grid; gap: 8px; margin: 8px 0 12px; }
 .model-list-helper label, .model-list-helper p { margin: 0; }
+.history-name-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.history-name-fields label { margin: 0; border-radius: 10px; background: #f8fafc; padding: 8px; font-size: 12px; }
+.question-bank-card textarea { min-height: 120px; }
+.question-bank-list { display: grid; gap: 10px; margin-top: 12px; }
+.question-bank-item { border: 1px solid #e2e8f0; border-radius: 14px; background: #f8fafc; padding: 12px; }
+.question-bank-item p { margin: 6px 0 10px; font-size: 12px; }
+.question-bank-item .button-row button { height: 36px; font-size: 12px; }
 .account-summary, .api-status { border: 1px solid #e2e8f0; border-radius: 16px; background: #f8fafc; padding: 14px; }
 .api-connection-form { margin-bottom: 12px; }
 .api-connection-form label { margin: 0; }
