@@ -4,6 +4,7 @@ export const JOB_STATUSES = ['queued', 'running', 'completed', 'failed'];
 export const CHECK_STATUSES = ['pass', 'warning', 'fail'];
 export const HISTORY_NAME_MODES = ['default', 'custom', 'parameters'];
 export const ACCESS_SCOPES = ['public', 'private', 'password', 'account', 'team'];
+export const HISTORY_NAME_FIELDS = ['baseUrl', 'concurrency', 'durationSeconds', 'endpointPreset', 'executionMode', 'mode', 'model'];
 export const ENDPOINT_PRESETS = [
   'openai-chat',
   'openai-responses',
@@ -72,6 +73,7 @@ export function validateJobInput(input) {
   if (!HISTORY_NAME_MODES.includes(historyNameMode)) errors.push(`historyNameMode must be one of ${HISTORY_NAME_MODES.join(', ')}`);
   const historyName = typeof body.historyName === 'string' ? body.historyName.trim() : '';
   if (historyNameMode === 'custom' && !historyName) errors.push('historyName is required when historyNameMode is custom');
+  const historyNameFields = normalizeHistoryNameFields(body.historyNameFields, errors);
   const accessScope = body.accessScope || 'private';
   if (!ACCESS_SCOPES.includes(accessScope)) errors.push(`accessScope must be one of ${ACCESS_SCOPES.join(', ')}`);
   const questionBank = normalizeQuestionBank(body.questionBank, errors);
@@ -99,6 +101,7 @@ export function validateJobInput(input) {
     durationSeconds,
     historyNameMode,
     historyName,
+    historyNameFields,
     accessScope,
     accessPassword: body.accessPassword ? String(body.accessPassword) : '',
     accountId: body.accountId ? String(body.accountId).trim() : '',
@@ -107,6 +110,17 @@ export function validateJobInput(input) {
     sampling: normalizeSampling(body.sampling),
     retainFullBodies: Boolean(body.retainFullBodies),
   };
+}
+
+export function validateQuestionBankInput(input) {
+  const errors = [];
+  const body = input && typeof input === 'object' ? input : {};
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) errors.push('name is required');
+  const items = normalizeQuestionBankItems(body.items, errors, 'items');
+  if (!items.length) errors.push('items must include at least one prompt');
+  if (errors.length) throwValidation(errors);
+  return { name, items };
 }
 
 export function validateScheduleInput(input) {
@@ -186,23 +200,53 @@ function normalizeSampling(sampling) {
   return { strategy, sampleRate: Number.isFinite(sampleRate) && sampleRate > 0 ? sampleRate : 1 };
 }
 
+function normalizeHistoryNameFields(fields, errors) {
+  if (fields === undefined) return [];
+  if (!Array.isArray(fields)) {
+    errors.push('historyNameFields must be an array');
+    return [];
+  }
+  const unique = [];
+  for (const field of fields) {
+    const name = String(field || '').trim();
+    if (!HISTORY_NAME_FIELDS.includes(name)) {
+      errors.push(`historyNameFields must use one of ${HISTORY_NAME_FIELDS.join(', ')}`);
+      continue;
+    }
+    if (!unique.includes(name)) unique.push(name);
+  }
+  return unique;
+}
+
 function normalizeQuestionBank(questionBank, errors) {
   if (questionBank === undefined) return [];
   if (!Array.isArray(questionBank)) {
     errors.push('questionBank must be an array');
     return [];
   }
-  return questionBank.map((entry, index) => {
+  return normalizeQuestionBankItems(questionBank, errors, 'questionBank').map((entry, index) => {
+    if (entry.type === 'image-generation') return { type: 'image', prompt: entry.prompt, ...(entry.imageUrl ? { imageUrl: entry.imageUrl } : {}) };
+    return entry;
+  });
+}
+
+function normalizeQuestionBankItems(items, errors, label) {
+  if (!Array.isArray(items)) {
+    errors.push(`${label} must be an array`);
+    return [];
+  }
+  return items.map((entry, index) => {
     const type = entry?.type;
     const prompt = typeof entry?.prompt === 'string' ? entry.prompt.trim() : '';
-    if (type !== 'text' && type !== 'image') errors.push(`questionBank[${index}].type must be text or image`);
-    if (!prompt) errors.push(`questionBank[${index}].prompt is required`);
+    if (!['text', 'image', 'image-generation'].includes(type)) errors.push(`${label}[${index}].type must be one of text, image, image-generation`);
+    if (!prompt) errors.push(`${label}[${index}].prompt is required`);
     if (type === 'image') {
       const imageUrl = typeof entry?.imageUrl === 'string' ? entry.imageUrl.trim() : '';
-      if (!imageUrl) errors.push(`questionBank[${index}].imageUrl is required`);
+      if (!imageUrl) errors.push(`${label}[${index}].imageUrl is required`);
       return { type, prompt, imageUrl };
     }
-    return { type, prompt };
+    const imageUrl = typeof entry?.imageUrl === 'string' ? entry.imageUrl.trim() : '';
+    return { type, prompt, ...(imageUrl ? { imageUrl } : {}) };
   });
 }
 

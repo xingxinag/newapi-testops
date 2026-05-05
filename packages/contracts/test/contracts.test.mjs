@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChecklist, ENDPOINT_PRESETS, redactHeaders, scoreFromChecklist, validateJobInput, validateNotificationConfig, validateScheduleInput, validateStorageConfig } from '../src/contracts.mjs';
+import { buildChecklist, ENDPOINT_PRESETS, redactHeaders, scoreFromChecklist, validateJobInput, validateNotificationConfig, validateQuestionBankInput, validateScheduleInput, validateStorageConfig } from '../src/contracts.mjs';
 
 test('validateJobInput normalizes a text test request', () => {
   const input = validateJobInput({ baseUrl: 'https://api.example.com/', model: 'gpt-test', mode: 'text', concurrency: 2, durationSeconds: 3 });
@@ -67,6 +67,26 @@ test('validateJobInput supports history naming access metadata and question bank
     { type: 'text', prompt: 'Say OK.' },
     { type: 'image', prompt: 'Describe this image.', imageUrl: 'https://example.com/cat.png' },
   ]);
+});
+
+test('validateJobInput keeps sorted parameter naming fields', () => {
+  const input = validateJobInput({ baseUrl: 'x', model: 'm', mode: 'text', historyNameMode: 'parameters', historyNameFields: ['model', 'mode', 'concurrency'] });
+  assert.deepEqual(input.historyNameFields, ['model', 'mode', 'concurrency']);
+});
+
+test('validateQuestionBankInput normalizes reusable text and image-generation banks', () => {
+  const bank = validateQuestionBankInput({ name: ' Upload Bank ', items: [{ type: 'text', prompt: ' Say OK ' }, { type: 'image-generation', prompt: ' Generate a cat ', imageUrl: ' https://example.com/cat.png ' }] });
+  assert.equal(bank.name, 'Upload Bank');
+  assert.deepEqual(bank.items, [
+    { type: 'text', prompt: 'Say OK' },
+    { type: 'image-generation', prompt: 'Generate a cat', imageUrl: 'https://example.com/cat.png' },
+  ]);
+});
+
+test('validateQuestionBankInput rejects invalid reusable bank uploads', () => {
+  assert.throws(() => validateQuestionBankInput({ name: ' ', items: [] }), /name is required/);
+  assert.throws(() => validateQuestionBankInput({ name: 'bad', items: [{ type: 'video', prompt: 'x' }] }), /type must be one of/);
+  assert.throws(() => validateQuestionBankInput({ name: 'bad', items: [{ type: 'text', prompt: ' ' }] }), /prompt is required/);
 });
 
 test('validateJobInput rejects invalid history naming access metadata and question bank entries', () => {
