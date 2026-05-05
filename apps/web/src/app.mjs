@@ -53,20 +53,64 @@ document.querySelector('#app').innerHTML = `
             <label class="inline"><input name="retainFullBodies" type="checkbox" /> 保留完整响应预览</label>
             <label id="team-select-row" hidden>团队归属<select name="teamId" id="team-select"><option value="">个人/开放模式</option></select></label>
           </fieldset>
+          <fieldset>
+            <legend>历史与访问</legend>
+            <label data-testid="history-access-scope">历史访问范围<select name="accessScope"><option value="private">仅自己</option><option value="team">团队可见</option><option value="public">公开链接</option><option value="password">口令/密码保护</option><option value="account">账号权限</option></select></label>
+            <label>访问密码<input name="accessPassword" type="password" placeholder="可选，公开/团队历史的查看密码" autocomplete="off" /></label>
+            <label data-testid="history-name-mode">历史命名<select name="historyNameMode"><option value="default">后端默认</option><option value="parameters">按参数自动命名</option><option value="custom">自定义名称</option></select></label>
+            <label data-testid="history-custom-name">自定义历史名称<input name="historyName" placeholder="例如：夜间冒烟测试" /></label>
+          </fieldset>
+          <fieldset data-testid="question-bank">
+            <legend>题库 Prompt</legend>
+            <label>文本题<input name="questionTextPrompt" placeholder="例如：用一句话介绍 NewAPI" /></label>
+            <label data-testid="question-bank-image-prompt">图片题 Prompt<input name="questionImagePrompt" placeholder="例如：描述图片中的主要对象" /></label>
+            <label>图片 URL<input name="questionImageUrl" placeholder="https://example.com/sample.png" /></label>
+          </fieldset>
           <div class="action-panel immediate-panel">
             <h3>立即测试</h3>
             <p class="muted">马上创建一次测试任务，运行完成后可在历史记录中查看证据与报告导出。</p>
-            <button type="submit">立即运行测试</button>
+            <button type="submit" id="immediate-run-button">立即运行测试</button>
+            <p class="muted" data-testid="immediate-feedback">等待提交即时测试。</p>
           </div>
           <fieldset class="action-panel schedule-panel">
             <legend>定时自动测试</legend>
             <label>计划名称<input name="scheduleName" placeholder="每小时样本测试" /></label>
             <label>间隔秒数<input name="intervalSeconds" type="number" value="3600" min="60" /></label>
+            <label data-testid="schedule-cron">Cron 表达式<input name="cron" placeholder="*/5 * * * *" /></label>
             <p class="muted">保存计划后，后台 worker 会按间隔自动执行；请使用 <code>npm run start:worker</code> 启动 worker。</p>
             <button type="button" id="schedule-button" class="secondary">创建定时计划</button>
           </fieldset>
           <p id="form-status" class="muted"></p>
         </form>
+        <section class="card" data-testid="storage-config">
+          <h2>存储配置</h2>
+          <p class="muted form-intro">配置报告与证据的保留策略；密钥保存后只显示后端返回的脱敏值。</p>
+          <form id="storage-config-form" class="config-form">
+            <label>存储类型<select name="provider"><option value="local">本地</option><option value="s3">S3</option><option value="r2">R2</option></select></label>
+            <label>Bucket<input name="bucket" placeholder="bucket-a" /></label>
+            <label>Endpoint<input name="endpoint" placeholder="https://storage.example.com" /></label>
+            <label>Region<input name="region" value="auto" /></label>
+            <label>Access Key ID<input name="accessKeyId" autocomplete="off" /></label>
+            <label>Secret Access Key<input name="secretAccessKey" type="password" autocomplete="off" /></label>
+            <label>保留天数<input name="retentionDays" type="number" value="30" min="1" /></label>
+            <p class="muted">当前密钥：<strong data-testid="storage-secret-masked" id="storage-secret-masked">未配置</strong></p>
+            <button type="submit" class="secondary">保存存储配置</button>
+            <p id="storage-config-status" class="muted"></p>
+          </form>
+        </section>
+        <section class="card" data-testid="notification-config">
+          <h2>通知配置</h2>
+          <p class="muted form-intro">保存通知渠道与模板；MVP 只负责配置，不直接发送通知。</p>
+          <form id="notification-config-form" class="config-form">
+            <label class="inline"><input name="enabled" type="checkbox" /> 启用通知</label>
+            <label>渠道<select name="channel"><option value="none">不发送</option><option value="webhook">Webhook</option><option value="email">Email</option></select></label>
+            <label>Webhook URL<input name="webhookUrl" placeholder="https://hooks.example.com/test" /></label>
+            <label>标题模板<input name="templateTitle" placeholder="Job {{displayName}}" /></label>
+            <label>正文模板<textarea name="templateBody" rows="4" placeholder="{{status}} / {{score}}"></textarea></label>
+            <button type="submit" class="secondary">保存通知配置</button>
+            <p id="notification-config-status" class="muted"></p>
+          </form>
+        </section>
       </aside>
       <section class="main-stack">
         <section class="card history-card">
@@ -89,12 +133,22 @@ document.querySelector('#app').innerHTML = `
 
 document.querySelector('#job-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const immediateButton = document.querySelector('#immediate-run-button');
+  const feedback = document.querySelector('[data-testid="immediate-feedback"]');
   const payload = getJobPayload(event.currentTarget);
+  immediateButton.disabled = true;
+  document.querySelector('[data-testid="immediate-feedback"]').textContent = '正在提交即时测试...';
   document.querySelector('#form-status').textContent = '正在运行测试...';
-  const response = await fetch(`${getApiBase()}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
-  const json = await response.json();
-  document.querySelector('#form-status').textContent = json.success ? `已创建测试任务 ${json.data.runId}` : json.message;
-  await Promise.all([loadJobs(), loadTrends()]);
+  try {
+    const response = await fetch(`${getApiBase()}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
+    const json = await response.json();
+    const message = json.success ? `已创建测试任务 ${json.data.runId}` : json.message;
+    document.querySelector('#form-status').textContent = message;
+    feedback.textContent = message;
+    await Promise.all([loadJobs(), loadTrends()]);
+  } finally {
+    immediateButton.disabled = false;
+  }
 });
 
 document.querySelector('#schedule-button').addEventListener('click', async () => {
@@ -105,6 +159,8 @@ document.querySelector('#schedule-button').addEventListener('click', async () =>
     intervalSeconds: Number(form.get('intervalSeconds')),
     input: getJobPayload(formElement),
   };
+  const cron = String(form.get('cron') || '').trim();
+  if (cron) payload.cron = cron;
   if (state.selectedTeamId) payload.teamId = state.selectedTeamId;
   document.querySelector('#form-status').textContent = '正在创建定时计划...';
   const response = await fetch(`${getApiBase()}/api/schedules`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
@@ -120,6 +176,16 @@ document.querySelector('#api-connection-form').addEventListener('submit', async 
   await testApiConnection();
 });
 
+document.querySelector('#storage-config-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await saveStorageConfig(event.currentTarget);
+});
+
+document.querySelector('#notification-config-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await saveNotificationConfig(event.currentTarget);
+});
+
 document.querySelector('#model-select').addEventListener('change', (event) => {
   const model = event.currentTarget.value;
   if (model) document.querySelector('#model-input').value = model;
@@ -132,11 +198,100 @@ async function testApiConnection() {
   state.apiBase = normalizeApiBase(input.value || defaultApiBase);
   input.value = state.apiBase;
   await checkApiHealth(getApiBase());
-  await loadCurrentUser().then(refreshProtectedData).catch((error) => {
+  await loadCurrentUser().then(refreshProtectedData).then(loadConfigForms).catch((error) => {
     document.querySelector('#jobs').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     document.querySelector('#schedules').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     document.querySelector('#trends').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
   });
+}
+
+async function loadConfigForms() {
+  await Promise.all([loadStorageConfig(), loadNotificationConfig()]);
+}
+
+async function loadStorageConfig() {
+  setStorageConfigStatus('正在读取存储配置...');
+  const response = await fetch(`${getApiBase()}/api/config/storage`, protectedFetchOptions());
+  if (response.status === 401) return setStorageConfigStatus('登录后可读取存储配置。');
+  const json = await response.json();
+  if (!json.success) return setStorageConfigStatus(json.message || '读取存储配置失败');
+  fillStorageConfig(json.data || {});
+  setStorageConfigStatus('已读取存储配置。');
+}
+
+async function saveStorageConfig(formElement) {
+  const form = new FormData(formElement);
+  const payload = {
+    provider: form.get('provider'),
+    bucket: form.get('bucket'),
+    endpoint: form.get('endpoint'),
+    region: form.get('region'),
+    accessKeyId: form.get('accessKeyId'),
+    secretAccessKey: form.get('secretAccessKey'),
+    retentionDays: Number(form.get('retentionDays')),
+  };
+  setStorageConfigStatus('正在保存存储配置...');
+  const response = await fetch(`${getApiBase()}/api/config/storage`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
+  const json = await response.json();
+  if (!json.success) return setStorageConfigStatus(json.message || '保存存储配置失败');
+  formElement.elements.secretAccessKey.value = '';
+  fillStorageConfig(json.data || {});
+  setStorageConfigStatus('已保存存储配置，密钥已按后端返回值脱敏显示。');
+}
+
+function fillStorageConfig(config) {
+  const form = document.querySelector('#storage-config-form');
+  const secretAccessKeyMasked = config.secretAccessKey || '未配置';
+  form.elements.provider.value = config.provider || 'local';
+  form.elements.bucket.value = config.bucket || '';
+  form.elements.endpoint.value = config.endpoint || '';
+  form.elements.region.value = config.region || 'auto';
+  form.elements.accessKeyId.value = config.accessKeyId || '';
+  form.elements.retentionDays.value = config.retentionDays || 30;
+  document.querySelector('#storage-secret-masked').textContent = secretAccessKeyMasked;
+}
+
+function setStorageConfigStatus(message) {
+  document.querySelector('#storage-config-status').textContent = message;
+}
+
+async function loadNotificationConfig() {
+  setNotificationConfigStatus('正在读取通知配置...');
+  const response = await fetch(`${getApiBase()}/api/config/notifications`, protectedFetchOptions());
+  if (response.status === 401) return setNotificationConfigStatus('登录后可读取通知配置。');
+  const json = await response.json();
+  if (!json.success) return setNotificationConfigStatus(json.message || '读取通知配置失败');
+  fillNotificationConfig(json.data || {});
+  setNotificationConfigStatus('已读取通知配置。');
+}
+
+async function saveNotificationConfig(formElement) {
+  const form = new FormData(formElement);
+  const payload = {
+    enabled: form.has('enabled'),
+    channel: form.get('channel'),
+    webhookUrl: form.get('webhookUrl'),
+    template: { title: form.get('templateTitle'), body: form.get('templateBody') },
+  };
+  setNotificationConfigStatus('正在保存通知配置...');
+  const response = await fetch(`${getApiBase()}/api/config/notifications`, { method: 'POST', headers: { 'content-type': 'application/json' }, ...protectedFetchOptions(), body: JSON.stringify(payload) });
+  const json = await response.json();
+  if (!json.success) return setNotificationConfigStatus(json.message || '保存通知配置失败');
+  fillNotificationConfig(json.data || {});
+  setNotificationConfigStatus('已保存通知配置。');
+}
+
+function fillNotificationConfig(config) {
+  const form = document.querySelector('#notification-config-form');
+  form.elements.enabled.checked = Boolean(config.enabled);
+  form.elements.channel.value = config.channel || 'none';
+  form.elements.webhookUrl.value = config.webhookUrl || '';
+  form.elements.templateTitle.value = config.template?.title || '';
+  form.elements.templateBody.value = config.template?.body || '';
+}
+
+function setNotificationConfigStatus(message) {
+  document.querySelector('#notification-config-status').textContent = message;
 }
 
 async function checkApiHealth(apiBase = getApiBase()) {
@@ -179,11 +334,34 @@ function getJobPayload(formElement) {
   const payload = Object.fromEntries(form.entries());
   delete payload.scheduleName;
   delete payload.intervalSeconds;
+  delete payload.cron;
+  delete payload.questionTextPrompt;
+  delete payload.questionImagePrompt;
+  delete payload.questionImageUrl;
   if (!state.selectedTeamId) delete payload.teamId;
   payload.concurrency = Number(payload.concurrency);
   payload.durationSeconds = Number(payload.durationSeconds);
   payload.retainFullBodies = form.has('retainFullBodies');
+  payload.accessScope = form.get('accessScope');
+  const accessPassword = String(form.get('accessPassword') || '').trim();
+  if (accessPassword) payload.accessPassword = accessPassword;
+  else delete payload.accessPassword;
+  payload.historyNameMode = form.get('historyNameMode');
+  const historyName = String(form.get('historyName') || '').trim();
+  if (payload.historyNameMode === 'custom') payload.historyName = historyName;
+  else delete payload.historyName;
+  payload.questionBank = buildQuestionBank(form);
   return payload;
+}
+
+function buildQuestionBank(form) {
+  const textPrompt = String(form.get('questionTextPrompt') || '').trim();
+  const imagePrompt = String(form.get('questionImagePrompt') || '').trim();
+  const imageUrl = String(form.get('questionImageUrl') || '').trim();
+  return [
+    textPrompt ? { type: 'text', prompt: textPrompt } : null,
+    imagePrompt && imageUrl ? { type: 'image', prompt: imagePrompt, imageUrl } : null,
+  ].filter(Boolean);
 }
 
 async function fetchModelList() {
@@ -446,7 +624,7 @@ function renderJob(job) {
   const artifacts = renderArtifactLinks(job.runId);
   const exports = ['csv', 'html', 'zip'].map((format) => `<a href="${exportUrl(job.runId, format)}" target="_blank" rel="noopener">${format.toUpperCase()} 报告</a>`).join('');
   return `<article class="job">
-    <header><strong>${escapeHtml(job.runId)}</strong><span>${escapeHtml(job.status)}</span><b>${escapeHtml(job.score)}%</b></header>
+    <header><strong>${escapeHtml(job.displayName || job.runId)}</strong><span>${escapeHtml(job.status)}</span><b>${escapeHtml(job.score)}%</b></header>
     <p>${escapeHtml(formatRunSummary(job.input, `${job.summary?.totalRequests || 0} 次请求`))}</p>
     ${renderJobMeta(job)}
     <section class="link-group">
@@ -469,6 +647,8 @@ function renderJobMeta(job) {
     ${reportMetric('创建时间', formatTimestamp(job.createdAt))}
     ${reportMetric('开始时间', formatTimestamp(job.startedAt))}
     ${reportMetric('完成时间', formatTimestamp(job.completedAt))}
+    ${reportMetric('Run ID', job.runId)}
+    ${reportMetric('访问范围', formatAccessScope(job.input?.accessScope))}
     ${reportMetric('请求方法', target.method)}
     ${reportMetric('测试端点', target.endpoint)}
     ${reportMetric('最终 URL', target.url)}
@@ -728,8 +908,9 @@ function formatMetric(value, suffix) {
 
 function renderSchedule(schedule) {
   const latestHistory = Array.isArray(schedule.history) ? schedule.history[0] : null;
+  const cadence = schedule.cron ? `Cron ${schedule.cron}` : `每 ${schedule.intervalSeconds} 秒`;
   return `<article class="job">
-    <header><strong>${escapeHtml(schedule.name)}</strong><span>每 ${escapeHtml(schedule.intervalSeconds)} 秒</span><b>${escapeHtml(schedule.history?.length || 0)} 次运行</b></header>
+    <header><strong>${escapeHtml(schedule.name)}</strong><span>${escapeHtml(cadence)}</span><b>${escapeHtml(schedule.history?.length || 0)} 次运行</b></header>
     <p>${escapeHtml(formatRunSummary(schedule.input))}</p>
     <div class="meta-grid">
       ${reportMetric('创建时间', formatTimestamp(schedule.createdAt))}
@@ -761,6 +942,10 @@ function formatEndpointPreset(preset) {
   })[preset] || preset;
 }
 
+function formatAccessScope(scope) {
+  return ({ public: '公开', private: '隐私', password: '口令/密码', account: '账号权限', team: '团队权限' })[scope] || scope;
+}
+
 function formatRunSummary(input = {}, suffix) {
   return [
     formatExecutionMode(input.executionMode || 'synthetic'),
@@ -785,7 +970,7 @@ function escapeHtml(value) {
 
 checkApiHealth(getApiBase());
 
-loadCurrentUser().then(refreshProtectedData).catch((error) => {
+loadCurrentUser().then(refreshProtectedData).then(loadConfigForms).catch((error) => {
   document.querySelector('#jobs').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
   document.querySelector('#schedules').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
   document.querySelector('#trends').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
