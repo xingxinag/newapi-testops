@@ -24,6 +24,19 @@ test('runDueSchedules runs one due schedule and advances nextRunAt', async () =>
   assert.equal(updated.nextRunAt, '2026-05-04T04:01:01.000Z');
 });
 
+test('runDueSchedules advances simple every-N-minutes cron schedules', async () => {
+  const store = await createStore();
+  await store.writeSchedules([schedule({ intervalSeconds: undefined, cron: '*/5 * * * *', nextRunAt: '2026-05-04T04:00:00.000Z' })]);
+
+  const result = await runDueSchedules(store, { now: new Date('2026-05-04T04:00:01.000Z') });
+  const [updated] = await store.readSchedules();
+
+  assert.equal(result.ran, 1);
+  assert.equal(updated.nextRunAt, '2026-05-04T04:05:00.000Z');
+  assert.equal(updated.cron, '*/5 * * * *');
+  assert.equal(updated.intervalSeconds, undefined);
+});
+
 test('runDueSchedules skips schedules that are not due', async () => {
   const store = await createStore();
   await store.writeSchedules([schedule({ nextRunAt: '2026-05-04T04:01:00.000Z' })]);

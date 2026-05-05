@@ -117,6 +117,40 @@ test('POST /api/jobs records rich live benchmark metrics from real samples', asy
   }
 });
 
+test('POST /api/jobs stores displayName from custom and parameter history naming metadata', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const customResponse = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://api.example.com', model: 'demo-model', mode: 'text', concurrency: 1, durationSeconds: 1, historyNameMode: 'custom', historyName: '  Nightly smoke  ' }),
+    });
+    assert.equal(customResponse.status, 201);
+    const custom = await customResponse.json();
+    assert.equal(custom.data.displayName, 'Nightly smoke');
+
+    const parameterResponse = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://api.example.com', model: 'demo-model', mode: 'image', endpointPreset: 'openai-image-generation', concurrency: 3, durationSeconds: 2, historyNameMode: 'parameters' }),
+    });
+    assert.equal(parameterResponse.status, 201);
+    const parameter = await parameterResponse.json();
+    assert.match(parameter.data.displayName, /image/);
+    assert.match(parameter.data.displayName, /demo-model/);
+    assert.match(parameter.data.displayName, /c3/);
+
+    const jobs = await (await fetch(`http://127.0.0.1:${port}/api/jobs`)).json();
+    assert.equal(jobs.data[0].displayName, parameter.data.displayName);
+    assert.equal(jobs.data[1].displayName, 'Nightly smoke');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('POST /api/jobs records failed live probe error samples and target report details', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
   const upstreamMessage = 'upstream exploded while processing chat completion';
@@ -260,6 +294,76 @@ test('POST /api/schedules creates a sampling schedule and immediately runs one j
     const schedulesResponse = await fetch(`http://127.0.0.1:${port}/api/schedules`);
     const schedules = await schedulesResponse.json();
     assert.equal(schedules.data[0].scheduleId, created.data.scheduleId);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('POST /api/schedules stores cron schedules without intervalSeconds', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/schedules`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'cron sample', cron: '*/10 * * * *', input: { baseUrl: 'https://api.example.com', model: 'sample-model', mode: 'text', concurrency: 1, durationSeconds: 1 } }),
+    });
+    assert.equal(response.status, 201);
+    const created = await response.json();
+    assert.equal(created.data.cron, '*/10 * * * *');
+    assert.equal(created.data.intervalSeconds, undefined);
+    assert.match(created.data.nextRunAt, /^\d{4}-\d{2}-\d{2}T/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('GET and POST /api/config/storage persist JSON config with masked secret', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const savedResponse = await fetch(`http://127.0.0.1:${port}/api/config/storage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 's3', bucket: 'bucket-a', endpoint: 'https://storage.example.com', region: 'auto', accessKeyId: 'access-id', secretAccessKey: 'super-secret-key', retentionDays: 14 }),
+    });
+    assert.equal(savedResponse.status, 200);
+    const saved = await savedResponse.json();
+    assert.equal(saved.data.secretAccessKey, 'supe**********ey');
+    assert.equal(JSON.stringify(saved).includes('super-secret-key'), false);
+
+    const loaded = await (await fetch(`http://127.0.0.1:${port}/api/config/storage`)).json();
+    assert.equal(loaded.data.secretAccessKey, 'supe**********ey');
+    assert.equal(loaded.data.retentionDays, 14);
+    assert.equal(JSON.stringify(loaded).includes('super-secret-key'), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('GET and POST /api/config/notifications persist JSON notification template', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'newapi-testops-'));
+  const server = createApiServer({ dataDir: temp, artifactDir: path.join(temp, 'artifacts') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const savedResponse = await fetch(`http://127.0.0.1:${port}/api/config/notifications`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true, channel: 'webhook', webhookUrl: 'https://hooks.example.com/test', template: { title: 'Job {{displayName}}', body: '{{status}}' } }),
+    });
+    assert.equal(savedResponse.status, 200);
+    const saved = await savedResponse.json();
+    assert.deepEqual(saved.data.template, { title: 'Job {{displayName}}', body: '{{status}}' });
+
+    const loaded = await (await fetch(`http://127.0.0.1:${port}/api/config/notifications`)).json();
+    assert.equal(loaded.data.enabled, true);
+    assert.equal(loaded.data.channel, 'webhook');
+    assert.deepEqual(loaded.data.template, { title: 'Job {{displayName}}', body: '{{status}}' });
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

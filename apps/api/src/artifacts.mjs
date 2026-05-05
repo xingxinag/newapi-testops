@@ -10,6 +10,8 @@ export function createArtifactStore({ dataDir = './data', artifactDir = './data/
     artifacts,
     jobsFile: path.join(root, 'jobs.json'),
     schedulesFile: path.join(root, 'schedules.json'),
+    storageConfigFile: path.join(root, 'storage-config.json'),
+    notificationConfigFile: path.join(root, 'notification-config.json'),
     async ensure() {
       await mkdir(root, { recursive: true });
       await mkdir(artifacts, { recursive: true });
@@ -40,6 +42,22 @@ export function createArtifactStore({ dataDir = './data', artifactDir = './data/
       await this.ensure();
       await writeFile(this.schedulesFile, `${JSON.stringify(schedules, null, 2)}\n`);
     },
+    async readStorageConfig() {
+      await this.ensure();
+      return readJsonFile(this.storageConfigFile, {});
+    },
+    async writeStorageConfig(config) {
+      await this.ensure();
+      await writeFile(this.storageConfigFile, `${JSON.stringify(config, null, 2)}\n`);
+    },
+    async readNotificationConfig() {
+      await this.ensure();
+      return readJsonFile(this.notificationConfigFile, {});
+    },
+    async writeNotificationConfig(config) {
+      await this.ensure();
+      await writeFile(this.notificationConfigFile, `${JSON.stringify(config, null, 2)}\n`);
+    },
     async putArtifact(runId, name, value) {
       await this.ensure();
       return artifactDriver.putArtifact(runId, name, value);
@@ -49,6 +67,14 @@ export function createArtifactStore({ dataDir = './data', artifactDir = './data/
       return artifactDriver.readArtifact(runId, name);
     },
   };
+}
+
+async function readJsonFile(filePath, fallback) {
+  try {
+    return JSON.parse(await readFile(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
 }
 
 function createLocalArtifactDriver(artifacts) {

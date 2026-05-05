@@ -43,9 +43,28 @@ async function completeScheduleRun(store, scheduleId, completed, now) {
   const schedule = schedules.find((item) => item.scheduleId === scheduleId);
   if (!schedule) return;
   const history = [{ runId: completed.runId, status: completed.status, startedAt: completed.startedAt || schedule.lastStartedAt, completedAt: completed.completedAt }, ...(schedule.history || [])].slice(0, MAX_HISTORY);
-  const nextRunAt = new Date(now.getTime() + schedule.intervalSeconds * 1000).toISOString();
+  const nextRunAt = nextScheduleRunAt(schedule, now).toISOString();
   const updated = { ...schedule, lastRunId: completed.runId, lastRunAt: completed.completedAt, nextRunAt, history };
   delete updated.runningRunId;
   delete updated.leaseUntil;
   await store.writeSchedules(schedules.map((item) => (item.scheduleId === scheduleId ? updated : item)));
+}
+
+function nextScheduleRunAt(schedule, now) {
+  if (schedule.cron) return nextSimpleCronRunAt(schedule.cron, now);
+  return new Date(now.getTime() + schedule.intervalSeconds * 1000);
+}
+
+function nextSimpleCronRunAt(cron, now) {
+  const minutes = Number(String(cron).match(/^\*\/(\d+) \* \* \* \*$/)?.[1]);
+  const next = new Date(now);
+  next.setUTCSeconds(0, 0);
+  const currentMinute = next.getUTCMinutes();
+  const nextMinute = Math.ceil((currentMinute + 1) / minutes) * minutes;
+  if (nextMinute < 60) {
+    next.setUTCMinutes(nextMinute);
+    return next;
+  }
+  next.setUTCHours(next.getUTCHours() + 1, 0, 0, 0);
+  return next;
 }

@@ -1,7 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRunId, createScheduleId, validateJobInput, validateScheduleInput } from '../../../packages/contracts/src/contracts.mjs';
+import { createRunId, createScheduleId, validateJobInput, validateNotificationConfig, validateScheduleInput, validateStorageConfig } from '../../../packages/contracts/src/contracts.mjs';
 import { getTrendPoints } from './analytics.mjs';
 import { createArtifactStore } from './artifacts.mjs';
 import { clearSessionCookie, createAuthStore, parseSessionId, publicUser, sessionCookie } from './auth.mjs';
@@ -58,6 +58,26 @@ export function createApiServer(options = {}) {
         requireAuthIfNeeded(authRequired, current);
         return json(req, res, 200, { success: true, data: await visibleSchedules(store, auth, current, authRequired) });
       }
+      if (req.method === 'GET' && url.pathname === '/api/config/storage') {
+        requireAuthIfNeeded(authRequired, current);
+        return json(req, res, 200, { success: true, data: validateStorageConfig.mask(await store.readStorageConfig()) });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/config/storage') {
+        requireAuthIfNeeded(authRequired, current);
+        const config = validateStorageConfig(await readJson(req));
+        await store.writeStorageConfig(config);
+        return json(req, res, 200, { success: true, data: validateStorageConfig.mask(config) });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/config/notifications') {
+        requireAuthIfNeeded(authRequired, current);
+        return json(req, res, 200, { success: true, data: await store.readNotificationConfig() });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/config/notifications') {
+        requireAuthIfNeeded(authRequired, current);
+        const config = validateNotificationConfig(await readJson(req));
+        await store.writeNotificationConfig(config);
+        return json(req, res, 200, { success: true, data: config });
+      }
       const csvExportMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/export\.csv$/);
       if (req.method === 'GET' && csvExportMatch) {
         await requireJobAccess(decodeURIComponent(csvExportMatch[1]), store, auth, current, authRequired);
@@ -87,7 +107,7 @@ export function createApiServer(options = {}) {
         const runId = createRunId(new Date(createdAt));
         const owner = await ownerFields(body, current, auth, authRequired);
         const completed = await createAndRunJob({ ...scheduleInput.input, runId, createdAt, ...owner }, store);
-        const schedule = { scheduleId, name: scheduleInput.name, intervalSeconds: scheduleInput.intervalSeconds, createdAt, input: completed.input, lastRunId: runId, lastRunAt: completed.completedAt, nextRunAt: new Date(new Date(createdAt).getTime() + scheduleInput.intervalSeconds * 1000).toISOString(), history: [{ runId, status: completed.status, startedAt: completed.startedAt, completedAt: completed.completedAt }], ...owner };
+        const schedule = { scheduleId, name: scheduleInput.name, ...scheduleTimingFields(scheduleInput, createdAt), createdAt, input: completed.input, lastRunId: runId, lastRunAt: completed.completedAt, history: [{ runId, status: completed.status, startedAt: completed.startedAt, completedAt: completed.completedAt }], ...owner };
         await store.writeSchedules([schedule, ...await store.readSchedules()]);
         return json(req, res, 201, { success: true, data: schedule });
       }
@@ -198,6 +218,25 @@ async function requireJobAccess(runId, store, auth, current, authRequired) {
 function canAccessOwned(item, userId, teamIds) {
   if (item.ownerTeamId) return teamIds.has(item.ownerTeamId);
   return item.ownerUserId === userId;
+}
+
+function scheduleTimingFields(scheduleInput, createdAt) {
+  if (scheduleInput.cron) return { cron: scheduleInput.cron, nextRunAt: nextSimpleCronRunAt(scheduleInput.cron, new Date(createdAt)).toISOString() };
+  return { intervalSeconds: scheduleInput.intervalSeconds, nextRunAt: new Date(new Date(createdAt).getTime() + scheduleInput.intervalSeconds * 1000).toISOString() };
+}
+
+function nextSimpleCronRunAt(cron, now) {
+  const minutes = Number(String(cron).match(/^\*\/(\d+) \* \* \* \*$/)?.[1]);
+  const next = new Date(now);
+  next.setUTCSeconds(0, 0);
+  const currentMinute = next.getUTCMinutes();
+  const nextMinute = Math.ceil((currentMinute + 1) / minutes) * minutes;
+  if (nextMinute < 60) {
+    next.setUTCMinutes(nextMinute);
+    return next;
+  }
+  next.setUTCHours(next.getUTCHours() + 1, 0, 0, 0);
+  return next;
 }
 
 function statusError(statusCode, message) {
