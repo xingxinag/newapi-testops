@@ -12,6 +12,17 @@ NewAPI TestOps is front/back separated. The frontend only depends on `PUBLIC_API
 
 Phase 1 implements local API, static frontend build, local artifact storage, synthetic probe jobs, single-request live HTTP probe jobs, request/response artifacts, and relayAPI-style scoring cards. R2/S3 is represented by the storage driver contract and environment variables; concrete S3 upload can be added without changing API or UI contracts.
 
+## Web-configured MVP features
+
+The Web UI stores advanced MVP configuration through the API service and the `DATA_DIR` JSON files:
+
+- `/api/config/storage` saves local/S3/R2-compatible metadata plus `retentionDays`; API responses mask `secretAccessKey`.
+- `/api/config/notifications` saves channel, target URL, and message templates. This MVP stores config only; it does not dispatch messages.
+- Job creation accepts history access scope, custom/default/parameter-derived display names, and text/image question-bank prompts.
+- Schedule creation accepts either `intervalSeconds` or a simple every-N-minutes cron expression such as `*/5 * * * *`.
+
+For Docker/VPS deployments, keep the API and worker sharing the same `/data` volume so jobs, schedules, storage config, and notification config are visible to both processes. Rebuild the Web image after frontend changes because `dist/web/config.js` is generated at build time.
+
 ## Timed and sampled tests
 
 The job contract includes `sampling.strategy` with `manual`, `scheduled`, and `random-sample`. Phase 1 stores this metadata and runs jobs synchronously for a verifiable MVP. Production schedulers can be added as:
