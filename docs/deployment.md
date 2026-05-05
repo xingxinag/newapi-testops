@@ -18,10 +18,11 @@ The Web UI stores advanced MVP configuration through the API service and the `DA
 
 - `/api/config/storage` saves local/S3/R2-compatible metadata plus `retentionDays`; API responses mask `secretAccessKey`.
 - `/api/config/notifications` saves channel, target URL, and message templates. This MVP stores config only; it does not dispatch messages.
-- Job creation accepts history access scope, custom/default/parameter-derived display names, and text/image question-bank prompts.
+- Job creation accepts history access scope plus exact default, custom, and selected-parameter display names.
+- `/api/question-banks` persists editable JSON question banks in `question-banks.json`; the Web UI can create, update, delete, import, and select text or image-generation prompts for concurrent test jobs.
 - Schedule creation accepts either `intervalSeconds` or a simple every-N-minutes cron expression such as `*/5 * * * *`.
 
-For Docker/VPS deployments, keep the API and worker sharing the same `/data` volume so jobs, schedules, storage config, and notification config are visible to both processes. Rebuild the Web image after frontend changes because `dist/web/config.js` is generated at build time.
+For Docker/VPS deployments, keep the API and worker sharing the same `/data` volume so jobs, schedules, question banks, storage config, and notification config are visible to both processes. Rebuild the Web image after frontend changes because `dist/web/config.js` is generated at build time.
 
 ## Timed and sampled tests
 

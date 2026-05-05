@@ -187,7 +187,7 @@ http://127.0.0.1:8788/api/health
 | 团队创建/成员共享 | 已完成 |
 | R2/S3 artifact 存储配置 | 已支持配置 |
 | 历史命名与访问范围元数据 | 已支持 |
-| 题库 Prompt（文本/图片） | 已支持 MVP |
+| 持久化问题库（文本/图片生成） | 已支持 |
 | Cron 定时表达式 | 已支持 `*/N * * * *` MVP |
 | 通知渠道与模板配置 | 已支持配置 |
 
@@ -196,8 +196,8 @@ http://127.0.0.1:8788/api/health
 Web 控制台现在可以直接配置这些测试任务元数据和系统配置：
 
 - 测试历史访问范围：公开、隐私、口令/密码保护、账号权限、团队权限。当前 MVP 会保存这些元数据，并继续复用已有账号/团队隔离能力。
-- 测试历史命名：默认格式接近 `YYYY-MM-DD HH:mm:ss 测试模式 测试models`，也可以自定义名称，或按测试参数自动组合命名。
-- 题库 Prompt：支持文本题，也支持图片生成/图片理解场景的图片 Prompt 与图片 URL。
+- 测试历史命名：默认格式为 `YYYY-MM-DD HH:mm:ss 测试模式 测试models`，也可以自定义名称，或勾选测试任务参数后按固定顺序组合命名。
+- 问题库管理：支持在 Web UI 新建、编辑、删除和导入 JSON 问题库；任务可选择单个题库或合并全部题库 Prompt，支持文本和图片生成 Prompt。
 - 立即测试反馈：点击“立即运行测试”后按钮会进入禁用状态，并显示提交中、成功或失败提示，避免误以为页面卡住。
 - S3/R2 存储配置：在 Web UI 保存 provider、bucket、endpoint、region、accessKeyId、secretAccessKey、保留天数。后端响应只返回脱敏后的 secret。
 - Cron 定时任务：除间隔秒数外，可填写 `*/5 * * * *` 这类每 N 分钟执行一次的 MVP cron 表达式。
@@ -210,6 +210,11 @@ GET  /api/config/storage
 POST /api/config/storage
 GET  /api/config/notifications
 POST /api/config/notifications
+GET  /api/question-banks
+POST /api/question-banks
+PUT  /api/question-banks/:id
+DELETE /api/question-banks/:id
+POST /api/question-banks/import
 ```
 
 这些配置保存在 `DATA_DIR` 下的 JSON 文件中。请不要把真实密钥写进 README、GitHub、Docker 镜像或公开日志。
